@@ -1,0 +1,233 @@
+// Prisma Schema for DevMind Domain Architecture
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String
+  passwordHash     String?
+  avatarUrl        String?
+  role             String            @default("Developer")
+  color            String            @default("#C8D62B")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  memberships      OrgMember[]
+  learningProgress LearningProgress[]
+  githubAccount    GitHubAccount?
+}
+
+model GitHubAccount {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  githubUserId String   @unique
+  login        String
+  name         String?
+  avatarUrl    String?
+  email        String?
+  accessToken  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id        String      @id @default(cuid())
+  name      String
+  slug      String      @unique
+  avatarUrl String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  members   OrgMember[]
+  projects  Project[]
+}
+
+model OrgMember {
+  id        String       @id @default(cuid())
+  orgId     String
+  userId    String
+  role      String       @default("MEMBER") // OWNER, ADMIN, MEMBER
+  createdAt DateTime     @default(now())
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+}
+
+model Project {
+  id           String       @id @default(cuid())
+  orgId        String
+  name         String
+  slug         String       @unique
+  description  String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repositories Repository[]
+}
+
+model Repository {
+  id                   String             @id @default(cuid())
+  projectId            String
+  name                 String
+  owner                String
+  defaultBranch        String             @default("main")
+  isAnalyzed           Boolean            @default(true)
+  ingestionStatus      String             @default("COMPLETED") // PENDING, INDEXING, COMPLETED, PARTIAL, FAILED
+  ingestionError       String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  embeddingStatus      String             @default("NOT_INDEXED") // NOT_INDEXED, INDEXING, COMPLETED, PARTIAL, FAILED
+  embeddingError       String?
+  indexedChunksCount   Int                @default(0)
+  embeddingStartedAt   DateTime?
+  embeddingCompletedAt DateTime?
+  filesCount           Int                @default(248)
+  modulesCount         Int                @default(12)
+  depsCount            Int                @default(36)
+  contributorsCount    Int                @default(18)
+  lastIndexedAt        DateTime           @default(now())
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  project              Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  branches             Branch[]
+  modules              Module[]
+  fileRecords          FileRecord[]
+  dependencyRecords    DependencyRecord[]
+  developerRecords     DeveloperRecord[]
+  documentRecords      DocumentRecord[]
+  activityRecords      ActivityRecord[]
+  documentChunks       DocumentChunk[]
+}
+
+model Branch {
+  id        String     @id @default(cuid())
+  repoId    String
+  name      String
+  isDefault Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  repo      Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([repoId, name])
+}
+
+model Module {
+  id               String       @id @default(cuid())
+  repoId           String
+  name             String
+  type             String       // core, api, db, ext
+  desc             String
+  aiSummary        String?
+  filesCount       Int          @default(0)
+  depsCount        Int          @default(0)
+  dependentsCount  Int          @default(0)
+  createdAt        DateTime     @default(now())
+  repo             Repository   @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  files            FileRecord[]
+}
+
+model FileRecord {
+  id             String          @id @default(cuid())
+  repoId         String
+  moduleId       String?
+  path           String
+  size           String
+  type           String          // code, doc, test
+  updatedText    String
+  createdAt      DateTime        @default(now())
+  repo           Repository      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  module         Module?         @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  documentChunks DocumentChunk[]
+
+  @@unique([repoId, path])
+}
+
+model DocumentChunk {
+  id            String     @id @default(cuid())
+  repoId        String
+  fileId        String
+  moduleId      String?
+  path          String
+  language      String
+  content       String
+  startLine     Int
+  endLine       Int
+  chunkIndex    Int
+  contentHash   String
+  embeddingJson String?    // JSON array of float vector values
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  repo          Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  file          FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([repoId, path, chunkIndex])
+}
+
+model DependencyRecord {
+  id          String     @id @default(cuid())
+  repoId      String
+  kind        String     // internal, external
+  fromModule  String?
+  toModule    String?
+  name        String?
+  version     String?
+  purpose     String?
+  status      String?
+  createdAt   DateTime   @default(now())
+  repo        Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+}
+
+model DeveloperRecord {
+  id                 String     @id @default(cuid())
+  repoId             String
+  name               String
+  role               String
+  color              String
+  coverage           Int        @default(70)
+  blurb              String?
+  recentContribution String?
+  createdAt          DateTime   @default(now())
+  repo               Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+}
+
+model DocumentRecord {
+  id          String     @id @default(cuid())
+  repoId      String
+  category    String
+  title       String
+  summary     String
+  author      String
+  status      String     // current, review, outdated
+  coverage    Int        @default(90)
+  contentJson String?    // Structured section JSON
+  createdAt   DateTime   @default(now())
+  repo        Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+}
+
+model ActivityRecord {
+  id            String     @id @default(cuid())
+  repoId        String
+  text          String
+  byUser        String
+  category      String
+  icon          String
+  timestampText String
+  createdAt     DateTime   @default(now())
+  repo          Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+}
+
+model LearningProgress {
+  id          String   @id @default(cuid())
+  userId      String
+  lessonId    String
+  completedAt DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+}

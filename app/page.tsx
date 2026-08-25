@@ -1,68 +1,103 @@
-import Image from "next/image";
+import Link from "next/link";
+import { Button, Card, CardBody, Badge, Logo } from "@/components/ui";
 
-export default function Home() {
+export default function LandingPage() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="lp" style={{ minHeight: "100vh", padding: "40px 24px" }}>
+      <nav className="lp-nav" style={{ maxWidth: 1100, margin: "0 auto 40px" }}>
+        <div className="row gap8 align-center">
+          <Logo />
+          <span className="sb-name" style={{ fontSize: 18, fontWeight: 600 }}>
+            DevMind
+          </span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="spacer" />
+        <div className="row gap12">
+          <Link href="/login">
+            <Button variant="ghost">Sign in</Button>
+          </Link>
+          <Link href="/signup">
+            <Button variant="primary">Get Started</Button>
+          </Link>
+          <Link href="/app/overview">
+            <Button variant="secondary">Open Workspace</Button>
+          </Link>
         </div>
+      </nav>
+
+      <header
+        className="lp-hero"
+        style={{ maxWidth: 960, margin: "0 auto", textAlign: "center" }}
+      >
+        <div className="lp-eyebrow" style={{ justifyContent: "center" }}>
+          <span className="dot" />
+          Engineering Intelligence Platform
+        </div>
+        <h1 className="lp-h1" style={{ marginTop: 16 }}>
+          Your Engineering Team&apos;s <span className="hl">Memory</span>.
+        </h1>
+        <p className="lp-sub" style={{ maxWidth: 640, margin: "16px auto 32px" }}>
+          Understand complex codebases faster by turning scattered engineering
+          knowledge into one intelligent workspace.
+        </p>
+
+        <div className="row gap16" style={{ justifyContent: "center" }}>
+          <Link href="/app/overview">
+            <Button variant="primary" size="xl">
+              Go to Workspace
+            </Button>
+          </Link>
+          <Link href="/repos">
+            <Button variant="secondary" size="xl">
+              Choose Repository
+            </Button>
+          </Link>
+        </div>
+      </header>
+
+      <main style={{ maxWidth: 960, margin: "48px auto 0" }}>
+        <Card>
+          <CardBody style={{ padding: 32 }}>
+            <div className="row between align-center" style={{ marginBottom: 16 }}>
+              <div>
+                <h2 style={{ fontSize: 18, fontWeight: 600 }}>
+                  DevMind App Shell Ready
+                </h2>
+                <p className="t3 small" style={{ marginTop: 4 }}>
+                  Step 3 routing &amp; shell migration complete.
+                </p>
+              </div>
+              <Badge variant="lime">Step 3 Approved</Badge>
+            </div>
+            <div className="row wrap gap12" style={{ marginTop: 24 }}>
+              <Link href="/app/overview">
+                <Button variant="secondary" size="sm">
+                  /app/overview
+                </Button>
+              </Link>
+              <Link href="/app/map">
+                <Button variant="secondary" size="sm">
+                  /app/map
+                </Button>
+              </Link>
+              <Link href="/app/modules">
+                <Button variant="secondary" size="sm">
+                  /app/modules
+                </Button>
+              </Link>
+              <Link href="/app/files">
+                <Button variant="secondary" size="sm">
+                  /app/files
+                </Button>
+              </Link>
+              <Link href="/app/learning">
+                <Button variant="secondary" size="sm">
+                  /app/learning
+                </Button>
+              </Link>
+            </div>
+          </CardBody>
+        </Card>
       </main>
     </div>
   );

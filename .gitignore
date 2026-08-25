@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local database
+/prisma/dev.db
+/prisma/*.db-journal
+
+# VS Code local settings
+.vscode/
+
+prisma/*.db
+prisma/*.db-journal
