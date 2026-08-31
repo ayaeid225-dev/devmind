@@ -1,142 +1,399 @@
-# DevMind — Engineering Intelligence Platform
+# DevMind AI 🧠
 
-DevMind is an AI-assisted engineering intelligence platform built with **Next.js 16 (App Router)**, **React 19**, **TypeScript**, and **Prisma ORM**.
+### Engineering Intelligence Platform
 
-It helps engineering teams understand complex codebases, map architecture, trace dependencies, inspect code evidence, track knowledge concentration, and onboard developers faster.
+**DevMind AI** is an engineering intelligence platform designed to help software teams understand, navigate, and interact with their codebases through an AI-powered workspace.
 
----
+Instead of treating a repository as a collection of files, DevMind brings together **code understanding, repository context, project structure, engineering insights, and AI assistance** in one unified experience.
 
-## 🚀 Current Project Status
-
-- **Migration Phase**: **Complete (Frontend, Backend, Auth, GitHub OAuth, Ingestion, RAG Retrieval, Ask DevMind AI, Multi-Agent Engine)**.
-- **Route Coverage**: **100% (45 App Router workspace screens & API endpoints)**.
-- **Authentication**: Email/Password + HttpOnly JWT session engine (`lib/server/auth.ts`) & protected `/app/*` middleware.
-- **GitHub Integration**: GitHub OAuth 2.0 Authorization Code Flow & Account Linking (`lib/server/github.ts`).
-- **Ingestion & Indexing**: Real GitHub Repository Ingestion Subsystem (`lib/server/ingestion/`).
-- **RAG & Vector Retrieval**: Semantic Evidence Retrieval Foundation (`lib/server/rag/`).
-- **Ask DevMind AI Subsystem**: Grounded RAG Chat & Citation Reasoning (`lib/server/ai/`).
-- **Autonomous Multi-Agent Subsystem**: Controlled Multi-Agent Intelligence Engine (`lib/server/agents/`):
-  - **Planner Agent**: Goal deconstruction and sub-investigation planning (`planner-agent.ts`).
-  - **Architecture Agent**: Structural pattern detection & module boundary auditing (`architect-agent.ts`).
-  - **Dependency Agent**: Internal module edge & package dependency analysis (`dependency-agent.ts`).
-  - **Review Agent**: Evidence verification & contradiction checking (`review-agent.ts`).
-  - **Synthesis Agent**: Unified multi-agent report synthesis & citation validation (`synthesis-agent.ts`).
-  - **Multi-Agent REST API**: Protected analysis endpoint (`POST /api/agents/analyze`).
-- **Database Engine**: Prisma ORM 5.22.0 (`prisma/schema.prisma`) with SQLite local development database (`prisma/dev.db`).
-- **Design System**: 100% faithful to the original DevMind prototype styling (`#090B0A` background, `#C8D62B` brand accent, Geist / Geist Mono typography, 232px sidebar width, 56px topbar height).
+> **Ask questions. Get evidence. Understand your codebase.**
 
 ---
 
-## 🛠️ Tech Stack
+## 🎯 Why DevMind?
 
-- **Framework**: [Next.js 16](https://nextjs.org) (App Router, Middleware, Server & Client Components)
-- **UI Library**: [React 19](https://react.dev)
-- **Language**: [TypeScript 5](https://www.typescriptlang.org)
-- **Database / ORM**: [Prisma ORM 5.22](https://www.prisma.io) with SQLite (PostgreSQL + pgvector ready)
-- **Security / Auth**: `bcryptjs` (password hashing), `jose` (JWT HttpOnly session cookies)
-- **Ingestion Engine**: Deterministic Regex Parser & Static Analysis (`lib/server/ingestion/`)
-- **RAG Retrieval Engine**: Hybrid Cosine Similarity Ranker (`lib/server/rag/`)
-- **AI Reasoning Engine**: Grounded RAG LLM Provider & Citation Validator (`lib/server/ai/`)
-- **Multi-Agent Subsystem**: 5-Role Bounded Single-Pass Agent Pipeline (`lib/server/agents/`)
-- **Canvas / Graphics**: Pure SVG Architecture Graph Engine (`components/map/ProjectMapCanvas.tsx`) & SVG Skill Radar Chart (`app/app/devs/[id]/page.tsx`)
+Modern software projects become increasingly difficult to understand as they grow.
+
+Developers often need to move between:
+
+* Source code
+* Documentation
+* Dependencies
+* Git history
+* Project structure
+* Developer activity
+* AI tools
+
+**DevMind** aims to bring these pieces together into a single engineering workspace.
 
 ---
 
-## 📦 Getting Started
+## ✨ Core Features
 
-### 1. Prerequisites
-- Node.js 18.x or later
-- npm 9.x or later
+### 🔗 GitHub Repository Integration
 
-### 2. Installation & Database Setup
-Clone the repository and install dependencies:
+Connect a GitHub account and work with real repositories inside the DevMind workspace.
+
+* GitHub OAuth authentication
+* Repository selection
+* Repository-aware workspace
+* Repository data ingestion
+* Project context synchronization
+
+### 🧠 AI Engineering Assistant
+
+Interact with an AI assistant that works with the selected repository context.
+
+* Ask engineering questions
+* Explore project structure
+* Understand implementation details
+* Get contextual explanations
+* Generate engineering-oriented insights
+
+### 📊 Project Overview
+
+Get a high-level view of the selected software project.
+
+* Repository information
+* Project statistics
+* Engineering activity
+* Project structure
+* Development insights
+
+### 🧩 Modules
+
+Explore the major modules and components of a software project.
+
+* Module discovery
+* Module details
+* Related files
+* AI-assisted module analysis
+
+### 🗺️ Project Map
+
+Visualize relationships between different parts of the codebase.
+
+* Project structure
+* Component relationships
+* Dependencies
+* Codebase navigation
+
+### 📚 Documentation
+
+Centralize and explore project documentation.
+
+* Documentation browsing
+* Document details
+* Repository-aware context
+* AI-assisted documentation workflows
+
+### 👨‍💻 Developer Activity
+
+Understand activity across the repository.
+
+* Developer information
+* Activity history
+* Contribution context
+* Engineering insights
+
+### 📖 Learning Path
+
+Provide contextual learning resources based on the project and technologies being explored.
+
+---
+
+# 🖼️ Product Showcase
+
+## 🏠 Home
+
+<p align="center">
+  <img src="screenshots/home.png" width="900" alt="DevMind Home">
+</p>
+
+---
+
+## 📊 Dashboard
+
+<p align="center">
+  <img src="screenshots/dashboard-overview.png" width="900" alt="DevMind Dashboard">
+</p>
+
+---
+
+## 🔗 Repository Overview
+
+<p align="center">
+  <img src="screenshots/repository-overview.png" width="900" alt="DevMind Repository Overview">
+</p>
+
+---
+
+## 🧩 Modules
+
+<p align="center">
+  <img src="screenshots/modules.png" width="900" alt="DevMind Modules">
+</p>
+
+---
+
+## 🗺️ Project Map
+
+<p align="center">
+  <img src="screenshots/project-map.png" width="900" alt="DevMind Project Map">
+</p>
+
+---
+
+## 📚 Documentation
+
+<p align="center">
+  <img src="screenshots/documentation.png" width="900" alt="DevMind Documentation">
+</p>
+
+---
+
+## 📈 Activity
+
+<p align="center">
+  <img src="screenshots/activity.png" width="900" alt="DevMind Activity">
+</p>
+
+---
+
+## 🤖 AI Assistant
+
+<p align="center">
+  <img src="screenshots/ai-assistant.png" width="900" alt="DevMind AI Assistant">
+</p>
+
+---
+
+## 📖 Learning Path
+
+<p align="center">
+  <img src="screenshots/learning-path.png" width="900" alt="DevMind Learning Path">
+</p>
+
+---
+
+# 🏗️ Platform Architecture
+
+At a high level, DevMind connects the following layers:
+
+```text
+                    ┌──────────────────────┐
+                    │      GitHub Repo     │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ Repository Ingestion │
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │ Project Intelligence │
+                    └──────────┬───────────┘
+                               │
+             ┌─────────────────┼─────────────────┐
+             ▼                 ▼                 ▼
+        Project Map        Modules          Documentation
+             │                 │                 │
+             └─────────────────┼─────────────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │    AI Assistant      │
+                    └──────────────────────┘
+```
+
+The architecture is designed around a **repository-aware engineering workspace**, allowing different parts of the platform to operate using the currently selected repository context.
+
+---
+
+# 🧠 AI Capabilities
+
+DevMind integrates AI into the engineering workflow to support:
+
+* Repository understanding
+* Codebase exploration
+* Module analysis
+* Engineering questions
+* Documentation assistance
+* Contextual explanations
+* Learning recommendations
+
+The goal is not simply to provide a generic chatbot, but to create an AI experience that is aware of the software project being explored.
+
+---
+
+# 🛠️ Tech Stack
+
+| Technology       | Purpose                           |
+| ---------------- | --------------------------------- |
+| **Next.js**      | Web application framework         |
+| **React**        | UI development                    |
+| **TypeScript**   | Type-safe application development |
+| **Tailwind CSS** | UI styling                        |
+| **GitHub API**   | Repository integration            |
+| **GitHub OAuth** | Account authentication            |
+| **Gemini API**   | AI capabilities                   |
+| **Prisma**       | Data access layer                 |
+| **SQLite**       | Local development database        |
+
+---
+
+# 🔐 Security
+
+DevMind is designed with security in mind.
+
+Sensitive credentials should **never be committed to the repository**.
+
+Environment variables are used for secrets such as:
+
+```text
+GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET
+GEMINI_API_KEY
+```
+
+For production deployments, credentials should be stored using secure environment-variable management.
+
+---
+
+# 🚀 Getting Started
+
+## Prerequisites
+
+Make sure you have:
+
+* Node.js
+* npm
+* Git
+* A GitHub account
+* Required API credentials for GitHub and AI features
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/ayaeid225-dev/devmind.git
+```
+
+Navigate into the project:
+
+```bash
+cd devmind
+```
+
+Install dependencies:
+
 ```bash
 npm install
 ```
 
-Initialize the SQLite database schema:
-```bash
-npx prisma db push
+Create your environment file:
+
+```text
+.env.local
 ```
 
-### 3. Running Locally
-Start the development server:
+Configure the required environment variables.
+
+Then start the development server:
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 4. Running Quality Checks
-```bash
-# Run ESLint (0 errors, 0 warnings)
-npm run lint
+Open the application at:
 
-# Run TypeScript typecheck (0 errors)
-npx tsc --noEmit
-
-# Production build
-npm run build
+```text
+http://localhost:3000
 ```
 
 ---
 
-## 🔑 Environment Variables Guide
+# 📁 Project Structure
 
-```ini
-# Database Connection
-DATABASE_URL="file:./dev.db"
-
-# Authentication Secret
-AUTH_SECRET="devmind_secret_jwt_token_key_change_in_production_32bytes"
-
-# GitHub OAuth Credentials
-GITHUB_CLIENT_ID=Ov23liDiV39Oa9txVeP6
-GITHUB_CLIENT_SECRET=b30df65840270ed0f0d3fce5f2b84b1a096f5343
-GITHUB_REDIRECT_URI="http://localhost:3000/api/github/callback"
-
-# OpenAI AI / Embedding API Key (Optional: OpenAI key for production LLM & vectors; falls back to dev mock provider if unconfigured)
-OPENAI_API_KEY="your_openai_api_key_here"
-OPENAI_MODEL="gpt-4o-mini"
-```
-
----
-
-## 📂 Project Architecture
-
-```
+```text
 devmind/
-├── app/                      # Next.js 16 App Router pages and layouts
-│   ├── (auth & entry)/       # Landing (/), login, signup, connect, repos, analyze
-│   ├── api/                  # REST API routes (/api/auth/*, /api/github/*, /api/repositories/*, /api/rag/*, /api/ask, /api/agents/*)
-│   └── app/                  # Application Shell routes (/app/*)
+│
+├── app/
+│   ├── api/
+│   ├── app/
+│   ├── connect/
+│   └── repos/
+│
 ├── components/
-│   ├── ui/                   # Reusable React UI primitives (Button, Badge, Card, Modal, Switch, Toast, etc.)
-│   ├── shell/                # App Shell suite (Sidebar, Topbar, GlobalCommandPalette)
-│   └── map/                  # SVG Architecture Graph Engine (ProjectMapCanvas)
-├── data/
-│   ├── types.ts              # 30 domain TypeScript interfaces
-│   └── fixtures.ts           # Centralized mock dataset matching prototype data.js
+│   ├── shell/
+│   └── ui/
+│
 ├── lib/
-│   ├── server/               # Server data layer (db.ts, auth.ts, github.ts, repositories.ts, users.ts)
-│   │   ├── ingestion/        # Ingestion subsystem (index.ts, tree.ts, parser.ts, modules.ts, dependencies.ts)
-│   │   ├── rag/              # RAG retrieval layer (provider.ts, chunker.ts, indexer.ts, search.ts)
-│   │   ├── ai/               # AI reasoning layer (provider.ts, prompt.ts, validate.ts)
-│   │   └── agents/           # Multi-Agent subsystem (index.ts, agent-runner.ts, planner-agent.ts, architect-agent.ts, dependency-agent.ts, review-agent.ts, synthesis-agent.ts)
-│   ├── nav.ts                # Route metadata & breadcrumb resolution
-│   ├── course.ts             # Onboarding course store
-│   └── shell-context.tsx     # Shell context provider
-├── middleware.ts             # Route protection middleware enforcing session cookies on /app/*
-├── prisma/
-│   └── schema.prisma         # Prisma schema defining 14 domain models
-└── styles/
-    └── prototype/            # Migrated CSS files (base.css, components.css, app.css)
+│   ├── server/
+│   ├── map-helper.ts
+│   ├── nav.ts
+│   └── shell-context.tsx
+│
+├── screenshots/
+│   ├── activity.png
+│   ├── ai-assistant.png
+│   ├── dashboard-overview.png
+│   ├── documentation.png
+│   ├── home.png
+│   ├── learning-path.png
+│   ├── modules.png
+│   ├── project-map.png
+│   └── repository-overview.png
+│
+├── public/
+├── package.json
+└── README.md
 ```
 
 ---
 
-## 🔒 Security Baseline & READ-ONLY Safety Guarantee
+# 🗺️ Roadmap
 
-- **Strict READ-ONLY Operation**: All agents run in 100% READ-ONLY server mode (`import "server-only"`). Zero code execution, zero file mutation, zero Git pushes or PR creation.
-- **Bounded Single-Pass Execution**: Multi-agent reasoning executes in a single deterministic pass (`Planner -> Architect -> Dependency -> Review -> Synthesis`) without infinite loops or framework overhead.
-- **Citation Validation**: Server-side validator (`lib/server/ai/validate.ts`) verifies every citation path and line range against retrieved evidence chunks.
-- **Access Control**: `/api/agents/analyze` verifies authenticated user session and repository organization permissions.
+Future development may include:
+
+* Advanced repository intelligence
+* Deeper code dependency analysis
+* Improved AI reasoning over large codebases
+* More powerful documentation generation
+* Engineering team insights
+* Advanced project analytics
+* Expanded integrations with developer tools
+
+---
+
+# 🎓 Project
+
+DevMind AI is a collaborative software engineering project focused on exploring how AI can become a contextual member of the software development workflow.
+
+The project combines:
+
+* Artificial Intelligence
+* Software engineering
+* Repository analysis
+* Developer tooling
+* Data visualization
+* API integrations
+* Modern web application development
+
+---
+
+# 👥 Team
+
+### Aya Eid El Sayed & Marwan Mohamed
+
+**Co-creators of DevMind AI**
+
+DevMind AI is a collaborative project created by **Aya Eid El Sayed** and **Marwan Mohamed**, combining software engineering, AI, and developer tooling to explore a smarter way of understanding modern software projects.
+
+---
+
+<p align="center">
+  <strong>DevMind AI</strong><br>
+  Engineering Intelligence for Modern Software Teams.
+</p>
