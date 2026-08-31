@@ -16,7 +16,6 @@ export interface NavEntry {
   href: string;
 }
 
-/* app.js sidebar() NAV_MAIN / mid / bottom triples */
 export const NAV_WORKSPACE: NavEntry[] = [
   { id: "overview", label: "Overview", icon: "overview", href: "/app/overview" },
   { id: "map", label: "Project Map", icon: "map", href: "/app/map" },
@@ -40,7 +39,6 @@ export const NAV_SYSTEM: NavEntry[] = [
   { id: "help", label: "Help", icon: "help", href: "/app/help" },
 ];
 
-/* app.js SUB_META */
 export interface SubMeta {
   title: string;
   icon: IconName;
@@ -48,35 +46,28 @@ export interface SubMeta {
 }
 
 export const SUB_META: Record<string, SubMeta> = {
-  overview: { title: "Overview", icon: "overview", crumb: ["clinic-management"] },
-  map: { title: "Project Intelligence Map", icon: "map", crumb: ["clinic-management", "Intelligence Map"] },
-  modules: { title: "Modules", icon: "modules", crumb: ["clinic-management", "Modules"] },
-  files: { title: "Files", icon: "file", crumb: ["clinic-management", "Files"] },
-  deps: { title: "Dependencies", icon: "deps", crumb: ["clinic-management", "Dependencies"] },
-  ask: { title: "AI Assistant", icon: "ask", crumb: ["clinic-management", "Ask DevMind"] },
-  docs: { title: "Documentation", icon: "book", crumb: ["clinic-management", "Documentation"] },
-  devs: { title: "Developer Insights", icon: "users", crumb: ["clinic-management", "Developer Insights"] },
-  knowledge: { title: "Engineering Knowledge", icon: "brain", crumb: ["clinic-management", "Engineering Knowledge"] },
-  activity: { title: "Activity", icon: "log", crumb: ["clinic-management", "Activity"] },
-  design: { title: "Design \u2194 Code", icon: "puzzle", crumb: ["clinic-management", "Design \u2194 Code"] },
-  learning: { title: "Learning Path", icon: "learning", crumb: ["clinic-management", "Learning Path"] },
-  settings: { title: "Settings", icon: "settings", crumb: ["Workspace"] },
-  help: { title: "Help", icon: "help", crumb: ["Help"] },
+  overview: { title: "Overview", icon: "overview", crumb: ["Workspace"] },
+  map: { title: "Project Intelligence Map", icon: "map", crumb: ["Workspace", "Intelligence Map"] },
+  modules: { title: "Modules", icon: "modules", crumb: ["Workspace", "Modules"] },
+  files: { title: "Files", icon: "file", crumb: ["Workspace", "Files"] },
+  deps: { title: "Dependencies", icon: "deps", crumb: ["Workspace", "Dependencies"] },
+  ask: { title: "AI Assistant", icon: "ask", crumb: ["Workspace", "Ask DevMind"] },
+  docs: { title: "Documentation", icon: "book", crumb: ["Workspace", "Documentation"] },
+  devs: { title: "Developer Insights", icon: "users", crumb: ["Workspace", "Developer Insights"] },
+  knowledge: { title: "Engineering Knowledge", icon: "brain", crumb: ["Workspace", "Engineering Knowledge"] },
+  activity: { title: "Activity", icon: "log", crumb: ["Workspace", "Activity"] },
+  design: { title: "Design \u2194 Code", icon: "puzzle", crumb: ["Workspace", "Design \u2194 Code"] },
+  learning: { title: "Learning Path", icon: "learning", crumb: ["Workspace", "Learning Path"] },
+  settings: { title: "Settings", icon: "settings", crumb: ["Workspace", "Settings"] },
+  help: { title: "Help", icon: "help", crumb: ["Workspace", "Help"] },
 };
 
 export interface ShellMeta {
-  /** Sidebar item id highlighted for this route. */
   active: string;
   crumb: string[];
   back?: { href: string; label: string };
 }
 
-/*
- * Resolves sidebar highlight + breadcrumb from the pathname, mirroring how
- * renderAppShell picks SUB_META[sub] and how the detail renderers build
- * their own meta (module/evidence/doc/dev/lesson) with a back button.
- * Unknown subs fall back to overview meta.
- */
 export function metaForPath(pathname: string): ShellMeta {
   const clean = pathname.split("?")[0].split("#")[0];
   const parts = clean.split("/").filter(Boolean);
@@ -89,7 +80,7 @@ export function metaForPath(pathname: string): ShellMeta {
     const m = MODULES.find((x) => x.id === arg);
     return {
       active: "modules",
-      crumb: ["clinic-management", "Modules", m?.name ?? "Module"],
+      crumb: ["Workspace", "Modules", m?.name ?? "Module"],
       back: { href: "/app/modules", label: "Modules" },
     };
   }
@@ -101,7 +92,7 @@ export function metaForPath(pathname: string): ShellMeta {
     const fileName = entry?.path.split("/").pop() ?? arg;
     return {
       active: "files",
-      crumb: ["clinic-management", "Files", fileName],
+      crumb: ["Workspace", "Files", fileName],
       back: { href: "/app/files", label: "Files" },
     };
   }
@@ -110,7 +101,7 @@ export function metaForPath(pathname: string): ShellMeta {
     const doc = DOCS.find((d) => d.id === arg) ?? ADRS.find((a) => a.id === arg);
     return {
       active: "docs",
-      crumb: ["clinic-management", "Documentation", doc?.title ?? arg],
+      crumb: ["Workspace", "Documentation", doc?.title ?? arg],
       back: { href: "/app/docs", label: "Documentation" },
     };
   }
@@ -119,7 +110,7 @@ export function metaForPath(pathname: string): ShellMeta {
     const dev = DEVS.find((d) => d.id === arg);
     return {
       active: "devs",
-      crumb: ["clinic-management", "Developer Insights", dev?.name ?? arg],
+      crumb: ["Workspace", "Developer Insights", dev?.name ?? arg],
       back: { href: "/app/devs", label: "Developer Insights" },
     };
   }
@@ -129,7 +120,7 @@ export function metaForPath(pathname: string): ShellMeta {
     const lesson = step?.lessons.find((l) => l.id === arg3);
     return {
       active: "learning",
-      crumb: ["clinic-management", "Course", step?.title ?? "Step", lesson?.title ?? "Lesson"],
+      crumb: ["Workspace", "Course", step?.title ?? "Step", lesson?.title ?? "Lesson"],
       back: { href: "/app/learning", label: "Course" },
     };
   }

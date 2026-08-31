@@ -2,17 +2,19 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Icon, Logo, useToast } from "@/components/ui";
+import { Icon, Logo, useToast, Button } from "@/components/ui";
 
 export default function ConnectPage() {
-  const router = useRouter();
   const toast = useToast();
 
   const [connected, setConnected] = useState(false);
   const [githubLogin, setGithubLogin] = useState<string | null>(null);
+  const [githubName, setGithubName] = useState<string | null>(null);
+  const [githubAvatar, setGithubAvatar] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function checkStatus() {
@@ -21,10 +23,15 @@ export default function ConnectPage() {
         const data = await res.json();
         if (data.success && data.connected) {
           setConnected(true);
-          setGithubLogin(data.login || "anjali");
+          setGithubLogin(data.login);
+          setGithubName(data.name);
+          setGithubAvatar(data.avatarUrl);
+        } else {
+          setConnected(false);
+          setGithubLogin(null);
         }
       } catch {
-        // use default state
+        setConnected(false);
       } finally {
         setLoadingStatus(false);
       }
@@ -34,30 +41,47 @@ export default function ConnectPage() {
 
   const handleConnect = async () => {
     setConnecting(true);
+    setErrorMessage(null);
     try {
       const res = await fetch("/api/github/connect");
       const data = await res.json();
 
-      if (data.success && data.url) {
+      if (res.ok && data.success && data.url) {
         window.location.href = data.url;
       } else {
-        // Fallback demo simulation if API returns standard simulation endpoint
-        setTimeout(() => {
-          setConnected(true);
-          setGithubLogin("anjali");
-          setConnecting(false);
-          toast("GitHub connected", "success");
-          router.push("/repos");
-        }, 1200);
+        setConnecting(false);
+        const errStr = data.error || "Failed to initiate GitHub OAuth connection.";
+        setErrorMessage(errStr);
+        toast(errStr, "error");
       }
     } catch {
       setConnecting(false);
-      router.push("/connect-failed");
+      const errStr = "Error reaching server. Please check your network connection.";
+      setErrorMessage(errStr);
+      toast(errStr, "error");
     }
   };
 
-  const handleSimulateFailure = () => {
-    router.push("/connect-failed");
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      const res = await fetch("/api/github/disconnect", { method: "POST" });
+      const data = await res.json();
+      setDisconnecting(false);
+
+      if (data.success) {
+        setConnected(false);
+        setGithubLogin(null);
+        setGithubName(null);
+        setGithubAvatar(null);
+        toast("GitHub account disconnected", "info");
+      } else {
+        toast(data.error || "Failed to disconnect GitHub account", "error");
+      }
+    } catch {
+      setDisconnecting(false);
+      toast("Error disconnecting GitHub account", "error");
+    }
   };
 
   return (
@@ -93,7 +117,7 @@ export default function ConnectPage() {
           </div>
         </div>
         <div className="a-proof">
-          <Icon name="lock" className="ic-sm" /> Read-only access. Revoke anytime.
+          <Icon name="lock" className="ic-sm" /> Read-only access. Disconnect anytime.
         </div>
       </div>
 
@@ -104,23 +128,62 @@ export default function ConnectPage() {
             Give DevMind access to your repositories so it can understand your project’s structure, dependencies, and relationships.
           </p>
 
+          {errorMessage && (
+            <div
+              className="mt16"
+              style={{
+                padding: "10px 14px",
+                borderRadius: "6px",
+                background: "rgba(216, 92, 85, 0.15)",
+                border: "1px solid rgba(216, 92, 85, 0.4)",
+                color: "var(--error)",
+                fontSize: "13px",
+              }}
+            >
+              {errorMessage}
+            </div>
+          )}
+
           <div className="mt24">
             {loadingStatus ? (
               <div className="card card-pad">
                 <p className="t3">Checking GitHub connection status...</p>
               </div>
             ) : connected ? (
-              <div className="card card-pad row gap12 align-center">
-                <span style={{ color: "var(--success)" }}>
-                  <Icon name="checkCircle" />
-                </span>
-                <span className="grow">
-                  <b style={{ fontSize: 13 }}>Connected as @{githubLogin}</b>
-                  <div className="t3 small">medialab · 4 repositories available</div>
-                </span>
-                <Link href="/repos" className="btn btn-secondary btn-sm">
-                  Continue
-                </Link>
+              <div className="card card-pad col gap12">
+                <div className="row gap12 align-center">
+                  {githubAvatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={githubAvatar}
+                      alt={githubLogin || "Avatar"}
+                      style={{ width: 36, height: 36, borderRadius: "50%" }}
+                    />
+                  ) : (
+                    <span style={{ color: "var(--success)" }}>
+                      <Icon name="checkCircle" />
+                    </span>
+                  )}
+                  <span className="grow">
+                    <b style={{ fontSize: 13 }}>
+                      Connected as @{githubLogin} {githubName ? `(${githubName})` : ""}
+                    </b>
+                    <div className="t3 small">Verified GitHub OAuth Connection</div>
+                  </span>
+                </div>
+                <div className="row gap8 mt8">
+                  <Link href="/repos" className="btn btn-secondary btn-sm grow">
+                    Continue to Repositories
+                  </Link>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDisconnect}
+                    disabled={disconnecting}
+                  >
+                    {disconnecting ? "Disconnecting..." : "Disconnect GitHub"}
+                  </Button>
+                </div>
               </div>
             ) : (
               <button
@@ -130,7 +193,7 @@ export default function ConnectPage() {
                 onClick={handleConnect}
               >
                 <Icon name="github" />
-                <span id="connect-label">{connecting ? "Connecting…" : "Connect GitHub"}</span>
+                <span id="connect-label">{connecting ? "Connecting to GitHub…" : "Connect GitHub"}</span>
               </button>
             )}
           </div>
@@ -141,28 +204,16 @@ export default function ConnectPage() {
                 <span>OR</span>
               </div>
               <Link href="/repos" className="btn btn-secondary btn-lg btn-block">
-                I’ll use the demo workspace
+                Continue to Repositories
               </Link>
             </div>
           )}
 
           <div className="row gap8 mt24" style={{ justifyContent: "center" }}>
             <span className="t3 tiny">
-              <Icon name="shield" className="ic-sm" /> Your repository access is protected. OAuth 2.0, encrypted at rest.
+              <Icon name="shield" className="ic-sm" /> Your repository access is protected. Official OAuth 2.0 protocol.
             </span>
           </div>
-
-          {!connected && (
-            <div style={{ textAlign: "center", marginTop: 14 }}>
-              <button
-                className="btn btn-link btn-sm"
-                id="btn-fail"
-                onClick={handleSimulateFailure}
-              >
-                Simulate a connection issue
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>

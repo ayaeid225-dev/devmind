@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { seedDatabase } from "@/lib/server/seed";
-import { getCurrentUser } from "@/lib/server/auth";
 
 export async function POST() {
   if (process.env.NODE_ENV === "production") {
@@ -11,14 +10,6 @@ export async function POST() {
   }
 
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthenticated" },
-        { status: 401 }
-      );
-    }
-
     await seedDatabase();
     return NextResponse.json({
       success: true,

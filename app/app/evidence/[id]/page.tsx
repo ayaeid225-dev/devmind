@@ -1,58 +1,36 @@
 "use client";
 
-import React, { use } from "react";
+import React, { use, useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon, Badge, Button, useToast } from "@/components/ui";
-import { FILES, MODULES, DOCS, DOC_CATS } from "@/data/fixtures";
+import { useShell } from "@/lib/shell-context";
 
-function getModuleById(id: string) {
-  return MODULES.find((m) => m.id === id);
-}
-
-function getDocCategoryName(catId: string): string {
-  const cat = DOC_CATS.find((c) => c.id === catId);
-  return cat ? cat.name : catId;
+interface DbFileRecord {
+  id: string;
+  repoId: string;
+  moduleId: string | null;
+  path: string;
+  size: string;
+  type: string;
+  updatedText: string;
+  module?: { id: string; name: string; type: string } | null;
 }
 
 const DART_KEYWORDS = new Set([
-  "import",
-  "class",
-  "final",
-  "const",
-  "var",
-  "Future",
-  "void",
-  "String",
-  "int",
-  "double",
-  "bool",
-  "DateTime",
-  "return",
-  "if",
-  "else",
-  "for",
-  "while",
-  "throw",
-  "required",
-  "this",
-  "super",
-  "new",
-  "try",
-  "catch",
-  "static",
-  "enum",
-  "Map",
-  "List",
-  "Set",
-  "await",
-  "async",
-  "extends",
-  "implements",
-  "typedef",
-  "package",
-  "abstract",
-  "sync",
+  "import", "class", "final", "const", "var", "Future", "void", "String",
+  "int", "double", "bool", "DateTime", "return", "if", "else", "for",
+  "while", "throw", "required", "this", "super", "new", "try", "catch",
+  "static", "enum", "Map", "List", "Set", "await", "async", "extends",
+  "implements", "typedef", "package", "abstract", "sync",
 ]);
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 function formatTokenizedLine(line: string): string {
   const commentIdx = line.indexOf("//");
@@ -64,10 +42,9 @@ function formatTokenizedLine(line: string): string {
     commentPart = line.slice(commentIdx);
   }
 
-  // Tokenize keywords and strings in codePart
   const formattedCode = codePart
-    .replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, (str) => `<span class="cv-tok-s">${escapeHtml(str)}</span>`)
-    .split(/(\s+|[(){}[\];,.<>:=+*\/\-\?!])/)
+    .replace(/(['"])(?:(?=(\\?))\2.)*?\1/g, (str) => `<span class="cv-tok-s">${escapeHtml(str)}</span>`)
+    .split(/(\s+|[(){}[\];,.<>:=+*\/\-?!])/)
     .map((tok) => {
       if (tok.startsWith('<span class="cv-tok-s">')) return tok;
       if (DART_KEYWORDS.has(tok.trim())) {
@@ -84,32 +61,66 @@ function formatTokenizedLine(line: string): string {
   return formattedCode + formattedComment;
 }
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-export default function EvidenceDetailPage({
+function EvidenceDetailContent({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
+  const { activeRepoId, activeRepo } = useShell();
 
-  const file = FILES[id];
+  const repoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
 
-  if (!file) {
+  const [file, setFile] = useState<DbFileRecord | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/files/${id}`);
+        const data = await res.json();
+        if (!ignore) {
+          if (data.success && data.data) {
+            setFile(data.data);
+          } else {
+            setNotFound(true);
+          }
+        }
+      } catch {
+        if (!ignore) setNotFound(true);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    load();
+    return () => { ignore = true; };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="fade-up">
+        <div className="state" style={{ minHeight: 320 }}>
+          <div className="st-sub">Loading file details...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound || !file) {
     return (
       <div className="fade-up">
         <div className="page-head">
           <h1 className="page-title">Evidence File Not Found</h1>
-          <p className="page-sub">No code snippet indexed for evidence ID &quot;{id}&quot;.</p>
+          <p className="page-sub">No code file indexed for evidence ID &quot;{id}&quot;.</p>
         </div>
         <div className="mt24">
-          <Link href="/app/files">
+          <Link href={repoId ? `/app/files?repoId=${encodeURIComponent(repoId)}` : "/app/files"}>
             <Button variant="primary">
               <Icon name="arrowLeft" className="ic-sm" /> Back to Files
             </Button>
@@ -119,26 +130,14 @@ export default function EvidenceDetailPage({
     );
   }
 
-  const m = getModuleById(file.module);
   const fileName = file.path.split("/").pop() || file.path;
-  const hlSet = new Set(file.code.hl || []);
-
-  const relDocs = DOCS.filter(
-    (d) =>
-      (d.relFiles || []).includes(id) ||
-      (d.modules || []).includes(file.module)
-  ).slice(0, 3);
 
   const handleCopy = () => {
-    const txt = file.code.lines.join("\n");
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(txt);
+      navigator.clipboard.writeText(file.path);
     }
-    toast(`Copied ${fileName} to clipboard`, "info");
+    toast(`Copied ${fileName} path to clipboard`, "info");
   };
-
-  const firstHl = file.code.hl[0] || 1;
-  const lastHl = file.code.hl[file.code.hl.length - 1] || 1;
 
   return (
     <div className="fade-up">
@@ -151,27 +150,32 @@ export default function EvidenceDetailPage({
               <Icon name="checkCircle" className="ic-sm" /> Referenced by DevMind
             </Badge>
             <Button variant="secondary" size="sm" id="ev-copy" onClick={handleCopy}>
-              <Icon name="copy" className="ic-sm" /> Copy
+              <Icon name="copy" className="ic-sm" /> Copy Path
             </Button>
           </div>
         </div>
 
         <div className="ch-meta">
-          <span className="row gap5 align-center">
-            <Icon name="modules" className="ic-sm" /> Module:{" "}
-            <Link
-              href={`/app/modules/${file.module}`}
-              className="t2"
-              style={{ cursor: "pointer", fontWeight: 600, textDecoration: "none" }}
-            >
-              {m ? m.name : file.module}
-            </Link>
-          </span>
+          {file.module && (
+            <span className="row gap5 align-center">
+              <Icon name="modules" className="ic-sm" /> Module:{" "}
+              <Link
+                href={`/app/modules/${file.module.id}?repoId=${encodeURIComponent(repoId)}`}
+                className="t2"
+                style={{ cursor: "pointer", fontWeight: 600, textDecoration: "none" }}
+              >
+                {file.module.name}
+              </Link>
+            </span>
+          )}
           <span className="row gap5 align-center">
             <Icon name="file" className="ic-sm" /> Type: {file.type}
           </span>
           <span className="row gap5 align-center">
-            <Icon name="clock" className="ic-sm" /> Last indexed 5h ago
+            <Icon name="clock" className="ic-sm" /> {file.updatedText || "Indexed"}
+          </span>
+          <span className="row gap5 align-center">
+            <Icon name="spark" className="ic-sm" /> Size: {file.size}
           </span>
         </div>
 
@@ -180,73 +184,91 @@ export default function EvidenceDetailPage({
             <Icon name="brain" className="ic-sm" />
           </span>
           <p style={{ fontSize: 12.5 }}>
-            <b>Why DevMind referenced this file:</b> {file.note}
+            <b>Repository:</b> <span className="mono">{file.repoId}</span>
           </p>
         </div>
       </div>
 
-      {/* Code Viewer */}
-      <div className="mt16 code-view">
-        <div className="cv-head">
-          <span className="dots">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="cv-file">{file.path}</span>
-          <span className="cv-badge badge badge-gray badge-sm">
-            {firstHl}–{lastHl} highlighted
-          </span>
+      {/* File Info Card */}
+      <div className="card mt16">
+        <div className="card-header">
+          <div className="sec-title">File Information</div>
         </div>
-
-        <div className="cv-lines">
-          {file.code.lines.map((line, idx) => {
-            const lineNum = idx + 1;
-            const isHl = hlSet.has(lineNum);
-            const htmlContent = formatTokenizedLine(line);
-
-            return (
-              <div
-                key={lineNum}
-                className={`cv-line ${isHl ? "hl" : ""}`}
-              >
-                <span className="ln">{lineNum}</span>
-                <span
-                  className="lc"
-                  dangerouslySetInnerHTML={{ __html: htmlContent }}
-                />
-              </div>
-            );
-          })}
+        <div className="card-body col gap10">
+          <div className="fn-row">
+            <span className="grow">
+              <div className="fn-name">Full Path</div>
+              <div className="fn-sig mono">{file.path}</div>
+            </span>
+          </div>
+          <div className="fn-row">
+            <span className="grow">
+              <div className="fn-name">File Type</div>
+              <div className="fn-sig">{file.type}</div>
+            </span>
+          </div>
+          <div className="fn-row">
+            <span className="grow">
+              <div className="fn-name">Size</div>
+              <div className="fn-sig">{file.size}</div>
+            </span>
+          </div>
+          {file.module && (
+            <div className="fn-row">
+              <span className="grow">
+                <div className="fn-name">Module</div>
+                <div className="fn-sig">
+                  <Link
+                    href={`/app/modules/${file.module.id}?repoId=${encodeURIComponent(repoId)}`}
+                    style={{ color: "var(--brand)", textDecoration: "none" }}
+                  >
+                    {file.module.name}
+                  </Link>
+                </div>
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Related Documentation */}
-      {relDocs.length > 0 && (
-        <div className="card mt16">
-          <div className="card-header">
-            <div className="sec-title">Related Documentation</div>
-            <div className="sec-sub">docs that reference this file or module</div>
-          </div>
-          <div className="card-body col gap8">
-            {relDocs.map((doc) => (
-              <Link
-                key={doc.id}
-                href={`/app/docs/${doc.id}`}
-                className="doc-link-row"
-                style={{ textDecoration: "none" }}
-              >
-                <Icon name="book" className="ic-sm" />
-                <span className="grow">
-                  <b>{doc.title}</b>
-                  <div className="t3 tiny">{getDocCategoryName(doc.category)}</div>
-                </span>
-                <Icon name="arrowUpRight" className="ic-sm" />
-              </Link>
-            ))}
-          </div>
+      {/* Actions */}
+      <div className="card mt16">
+        <div className="card-header">
+          <div className="sec-title">Actions</div>
         </div>
-      )}
+        <div className="card-body row gap8">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              router.push(`/app/ask?q=${encodeURIComponent(`Explain the file: ${file.path}`)}`)
+            }
+          >
+            <Icon name="ask" className="ic-sm" /> Ask DevMind about this file
+          </Button>
+          {file.module && (
+            <Link
+              href={`/app/modules/${file.module.id}?repoId=${encodeURIComponent(repoId)}`}
+            >
+              <Button variant="secondary" size="sm">
+                <Icon name="modules" className="ic-sm" /> View Module
+              </Button>
+            </Link>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+export default function EvidenceDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  return (
+    <Suspense fallback={<div className="fade-up" />}>
+      <EvidenceDetailContent params={params} />
+    </Suspense>
   );
 }

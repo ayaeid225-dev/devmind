@@ -1,60 +1,92 @@
 "use client";
 
-import React, { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Icon, Badge, Input, useToast, type BadgeVariant } from "@/components/ui";
-import { REPO, MODULES, FILE_LIST, EVIDENCE_ID_BY_PATH } from "@/data/fixtures";
-import type { FileListItem, ModuleType } from "@/data/types";
+import { useShell } from "@/lib/shell-context";
 
-const BADGE_MAP: Record<ModuleType, { variant: BadgeVariant; label: string }> = {
+interface DbFileRecord {
+  id: string;
+  repoId: string;
+  moduleId: string | null;
+  path: string;
+  size: string;
+  type: string;
+  updatedText: string;
+  module?: { name: string; type: string } | null;
+}
+
+const BADGE_MAP: Record<string, { variant: BadgeVariant; label: string }> = {
   core: { variant: "lime", label: "Core" },
   api: { variant: "cyan", label: "API" },
   db: { variant: "blue", label: "DB" },
   ext: { variant: "amber", label: "Ext" },
 };
 
-function getModuleById(id: string) {
-  return MODULES.find((m) => m.id === id);
-}
-
-export default function FilesPage() {
-  const router = useRouter();
+function FilesPageContent() {
+  const searchParams = useSearchParams();
   const toast = useToast();
+  const { activeRepoId, activeRepo } = useShell();
+
+  const currentRepoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
+
+  const [files, setFiles] = useState<DbFileRecord[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredFiles = FILE_LIST.filter(
+  useEffect(() => {
+    let ignore = false;
+    async function loadFiles() {
+      if (!currentRepoId) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/files?repoId=${encodeURIComponent(currentRepoId)}`);
+        const data = await res.json();
+        if (!ignore) {
+          if (data.success && Array.isArray(data.data)) {
+            setFiles(data.data);
+          } else {
+            setFiles([]);
+          }
+        }
+      } catch {
+        if (!ignore) setFiles([]);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    loadFiles();
+    return () => {
+      ignore = true;
+    };
+  }, [currentRepoId]);
+
+  const filteredFiles = files.filter(
     (f) =>
       !searchQuery ||
       f.path.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const groups: Record<string, FileListItem[]> = {};
+  const groups: Record<string, DbFileRecord[]> = {};
   filteredFiles.forEach((f) => {
-    (groups[f.module] = groups[f.module] || []).push(f);
+    const groupKey = f.module?.name || f.moduleId || "Root / General";
+    (groups[groupKey] = groups[groupKey] || []).push(f);
   });
-
-  const handleRowClick = (f: FileListItem) => {
-    const evidenceId = EVIDENCE_ID_BY_PATH[f.path];
-    if (evidenceId) {
-      router.push(`/app/evidence/${evidenceId}`);
-    } else {
-      const fileName = f.path.split("/").pop() || f.path;
-      toast(`Selected file: ${fileName}`, "info");
-    }
-  };
 
   return (
     <div className="fade-up">
       {/* Page Header */}
       <div className="page-head">
-        <h1 className="page-title">Files</h1>
+        <h1 className="page-title">Files ({currentRepoId})</h1>
         <p className="page-sub">
-          {REPO.files || 248} files indexed across {REPO.modules || 12} modules.
+          {files.length} source code &amp; doc files indexed for repository <b className="mono">{currentRepoId}</b>.
         </p>
       </div>
 
-      {/* Toolbar / Badges Row */}
+      {/* Toolbar */}
       <div className="row gap8 mb16 align-center">
         <div className="input-wrap" style={{ flex: 1, maxWidth: 380 }}>
           <Input
@@ -65,73 +97,51 @@ export default function FilesPage() {
           />
         </div>
         <span className="badge badge-gray">
-          <Icon name="folder" className="ic-sm" /> lib/ 142 files
-        </span>
-        <span className="badge badge-gray">
-          <Icon name="fileText" className="ic-sm" /> test/ 18 files
+          <Icon name="folder" className="ic-sm" /> Indexed Code Files: {files.length}
         </span>
       </div>
 
-      {/* File Tree Container */}
+      {/* File List */}
       <div id="file-tree" className="file-tree">
-        {filteredFiles.length === 0 ? (
+        {loading ? (
+          <div className="state">
+            <div className="st-sub">Loading file tree for {currentRepoId}...</div>
+          </div>
+        ) : filteredFiles.length === 0 ? (
           <div className="state">
             <span className="st-ic">
               <Icon name="search" />
             </span>
-            <div className="st-title">No files found</div>
+            <div className="st-title">No files found for this repository</div>
             <div className="st-sub">
-              Nothing matches &quot;{searchQuery}&quot;. Try a different query.
+              {searchQuery
+                ? `Nothing matches "${searchQuery}".`
+                : `No file records found for repository "${currentRepoId}".`}
             </div>
           </div>
         ) : (
-          Object.keys(groups).map((modKey) => {
-            const m = getModuleById(modKey);
-            const groupFiles = groups[modKey];
+          Object.keys(groups).map((modName) => {
+            const groupFiles = groups[modName];
+            const sampleType = groupFiles[0]?.module?.type || "core";
 
             return (
-              <div key={modKey} className="ft-group">
+              <div key={modName} className="ft-group">
                 <div className="ft-head">
-                  {m && (
-                    <Badge variant={BADGE_MAP[m.type].variant}>
-                      <span className="dot" />
-                      {BADGE_MAP[m.type].label}
-                    </Badge>
-                  )}
-                  <span className="ft-name">{m ? m.name : modKey}</span>
+                  <Badge variant={BADGE_MAP[sampleType]?.variant || "lime"}>
+                    <span className="dot" />
+                    {BADGE_MAP[sampleType]?.label || "Module"}
+                  </Badge>
+                  <span className="ft-name">{modName}</span>
                   <span className="ft-count">{groupFiles.length}</span>
                 </div>
 
                 {groupFiles.map((f) => {
                   const fileName = f.path.split("/").pop() || f.path;
-                  const evidenceId = EVIDENCE_ID_BY_PATH[f.path];
-
-                  if (evidenceId) {
-                    return (
-                      <Link
-                        key={f.path}
-                        href={`/app/evidence/${evidenceId}`}
-                        className="ft-row"
-                        style={{ textDecoration: "none" }}
-                      >
-                        <span style={{ color: "var(--text-3)" }}>
-                          <Icon name="file" />
-                        </span>
-                        <span className="grow">
-                          <div className="ft-file">{fileName}</div>
-                          <div className="ft-path">{f.path}</div>
-                        </span>
-                        <span className="t3 tiny mono">{f.size}</span>
-                        <span className="t3 tiny">{f.updated}</span>
-                      </Link>
-                    );
-                  }
-
                   return (
                     <div
-                      key={f.path}
+                      key={f.id}
                       className="ft-row"
-                      onClick={() => handleRowClick(f)}
+                      onClick={() => toast(`Selected file: ${f.path}`, "info")}
                       style={{ cursor: "pointer" }}
                     >
                       <span style={{ color: "var(--text-3)" }}>
@@ -142,7 +152,7 @@ export default function FilesPage() {
                         <div className="ft-path">{f.path}</div>
                       </span>
                       <span className="t3 tiny mono">{f.size}</span>
-                      <span className="t3 tiny">{f.updated}</span>
+                      <span className="t3 tiny">{f.updatedText || "Indexed"}</span>
                     </div>
                   );
                 })}
@@ -152,5 +162,13 @@ export default function FilesPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function FilesPage() {
+  return (
+    <Suspense fallback={<div className="fade-up" />}>
+      <FilesPageContent />
+    </Suspense>
   );
 }

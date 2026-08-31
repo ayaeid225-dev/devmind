@@ -13,7 +13,7 @@ export function Topbar() {
   const pathname = usePathname();
   const router = useRouter();
   const toast = useToast();
-  const { repo, branch, user, setBranch, setUser, openPalette } = useShell();
+  const { activeRepoId, activeRepo, branch, user, setBranch, setUser, openPalette } = useShell();
   const doneLessons = useCourseDone();
   const stats = courseStats(doneLessons);
   const shellMeta = metaForPath(pathname);
@@ -31,7 +31,7 @@ export function Topbar() {
       label: (
         <span className="row between grow align-center" style={{ width: "100%" }}>
           <span>{b}</span>
-          {(repo.branch || branch) === b && (
+          {(activeRepo.branch || branch) === b && (
             <span style={{ color: "var(--brand)" }}>
               <Icon name="check" className="ic-sm" />
             </span>
@@ -59,19 +59,7 @@ export function Topbar() {
           <Icon name="checkCircle" />
           <span className="grow">
             <b>Analysis complete</b>
-            <div className="t3 tiny">{repo.name} is ready to explore</div>
-          </span>
-        </div>
-      ),
-    },
-    {
-      kind: "custom",
-      node: (
-        <div className="menu-item">
-          <Icon name="ask" />
-          <span className="grow">
-            <b>New PR: reschedule endpoint</b>
-            <div className="t3 tiny">9f2a1c • 2h ago</div>
+            <div className="t3 tiny">{activeRepo.name} is ready to explore</div>
           </span>
         </div>
       ),
@@ -97,8 +85,8 @@ export function Topbar() {
       kind: "custom",
       node: (
         <div style={{ padding: "10px 12px" }}>
-          <b style={{ fontSize: 13 }}>{user?.name || "Anjali Rao"}</b>
-          <div className="t3 tiny">{user?.email || "anjali@medialab.dev"}</div>
+          <b style={{ fontSize: 13 }}>{user?.name || "Authenticated User"}</b>
+          <div className="t3 tiny">{user?.email || "user@domain.com"}</div>
         </div>
       ),
     },
@@ -110,10 +98,11 @@ export function Topbar() {
   ];
 
   const handleAvatarSelect = async (pick: string) => {
+    const qParam = activeRepoId ? `?repoId=${encodeURIComponent(activeRepoId)}` : "";
     if (pick === "settings") {
-      router.push("/app/settings");
+      router.push(`/app/settings${qParam}`);
     } else if (pick === "help") {
-      router.push("/app/help");
+      router.push(`/app/help${qParam}`);
     } else if (pick === "signout") {
       try {
         await fetch("/api/auth/logout", { method: "POST" });
@@ -133,7 +122,10 @@ export function Topbar() {
           type="button"
           className="btn btn-ghost btn-sm"
           style={{ marginRight: 8 }}
-          onClick={() => router.push(shellMeta.back!.href)}
+          onClick={() => {
+            const qParam = activeRepoId ? `?repoId=${encodeURIComponent(activeRepoId)}` : "";
+            router.push(`${shellMeta.back!.href}${qParam}`);
+          }}
         >
           <Icon name="arrowLeft" className="ic-sm" />
           Back to {shellMeta.back.label}
@@ -164,7 +156,7 @@ export function Topbar() {
         onClick={openPalette}
       >
         <Icon name="search" />
-        <span>Search your project…</span>
+        <span>Search {activeRepo.name}…</span>
         <kbd>{isMac ? "⌘" : "Ctrl"} K</kbd>
       </button>
 
@@ -172,7 +164,7 @@ export function Topbar() {
         trigger={
           <button type="button" className="btn btn-secondary btn-sm" id="tb-branch">
             <Icon name="branch" className="ic-sm" />
-            {repo.branch || branch || "main"}
+            {activeRepo.branch || branch || "main"}
             <Icon name="chevronDown" className="ic-sm" />
           </button>
         }

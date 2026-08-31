@@ -1,30 +1,86 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, Badge, Button, Switch, Modal, useToast } from "@/components/ui";
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface GitHubAccountStatus {
+  connected: boolean;
+  login?: string;
+  name?: string;
+  avatarUrl?: string;
+}
 
 export default function SettingsPage() {
   const router = useRouter();
   const toast = useToast();
 
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [githubStatus, setGithubStatus] = useState<GitHubAccountStatus>({ connected: false });
+  const [loading, setLoading] = useState(true);
+
   const [pushNotifs, setPushNotifs] = useState(true);
   const [autoReindex, setAutoReindex] = useState(true);
   const [showEvidence, setShowEvidence] = useState(false);
-  const [isRepoConnected, setIsRepoConnected] = useState(true);
+
   const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
-  const handleRemoveRepo = () => {
-    setIsRepoConnected(false);
-    toast("Removed clinic-management from this workspace", "info");
-  };
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [meRes, ghRes] = await Promise.all([
+          fetch("/api/auth/me"),
+          fetch("/api/github/status"),
+        ]);
+        const meData = await meRes.json();
+        const ghData = await ghRes.json();
 
-  const handleRevokeAccess = () => {
-    setIsRevokeModalOpen(false);
-    toast("GitHub access revoked", "info");
-    setTimeout(() => {
-      router.push("/connect");
-    }, 700);
+        if (meData.success && meData.user) {
+          setUser(meData.user);
+        }
+        if (ghData.success && ghData.connected) {
+          setGithubStatus(ghData);
+        } else {
+          setGithubStatus({ connected: false });
+        }
+      } catch {
+        toast("Failed to load settings", "error");
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, [toast]);
+
+  const handleRevokeAccess = async () => {
+    setDisconnecting(true);
+    try {
+      const res = await fetch("/api/github/disconnect", { method: "POST" });
+      const data = await res.json();
+      setDisconnecting(false);
+      setIsRevokeModalOpen(false);
+
+      if (data.success) {
+        setGithubStatus({ connected: false });
+        toast("GitHub account disconnected successfully", "info");
+        setTimeout(() => {
+          router.push("/connect");
+        }, 700);
+      } else {
+        toast(data.error || "Failed to disconnect GitHub account", "error");
+      }
+    } catch {
+      setDisconnecting(false);
+      setIsRevokeModalOpen(false);
+      toast("Error disconnecting GitHub account", "error");
+    }
   };
 
   return (
@@ -45,15 +101,15 @@ export default function SettingsPage() {
             <Icon name="user" />
           </span>
           <span className="grow">
-            <div className="set-t">Anjali Rao</div>
-            <div className="set-s">anjali@medialab.dev</div>
+            <div className="set-t">{user?.name || "Authenticated User"}</div>
+            <div className="set-s">{user?.email || "user@domain.com"}</div>
           </span>
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => toast("Profile edit saved", "info")}
+            onClick={() => toast("Profile settings updated", "info")}
           >
-            Edit
+            Saved
           </Button>
         </div>
       </div>
@@ -61,17 +117,21 @@ export default function SettingsPage() {
       {/* Connected Repositories Card */}
       <div className="card mb16">
         <div className="card-header">
-          <div className="sec-title">Connected repositories</div>
-          <div className="sec-sub">medialab</div>
+          <div className="sec-title">Connected GitHub Account</div>
+          <div className="sec-sub">Official OAuth Integration</div>
         </div>
-        {isRepoConnected ? (
+        {loading ? (
+          <div className="set-row">
+            <span className="t3 small">Checking connection status...</span>
+          </div>
+        ) : githubStatus.connected ? (
           <div className="set-row">
             <span className="set-ic" style={{ color: "var(--brand)" }}>
               <Icon name="git" />
             </span>
             <span className="grow">
-              <div className="set-t mono">clinic-management</div>
-              <div className="set-s">Analyzed • re-indexes on every push</div>
+              <div className="set-t mono">@{githubStatus.login}</div>
+              <div className="set-s">Verified OAuth Connection • Repositories Access Granted</div>
             </span>
             <Badge variant="success" small dot>
               Connected
@@ -80,9 +140,10 @@ export default function SettingsPage() {
               variant="ghost"
               size="sm"
               id="set-remove"
-              onClick={handleRemoveRepo}
+              onClick={() => setIsRevokeModalOpen(true)}
+              style={{ color: "var(--error)" }}
             >
-              Remove
+              Disconnect
             </Button>
           </div>
         ) : (
@@ -91,15 +152,15 @@ export default function SettingsPage() {
               <Icon name="git" />
             </span>
             <span className="grow">
-              <div className="set-t mono">No repositories connected</div>
-              <div className="set-s">Connect a GitHub repository to begin indexing</div>
+              <div className="set-t mono">No GitHub account connected</div>
+              <div className="set-s">Connect your GitHub account via official OAuth 2.0 to access repositories</div>
             </span>
             <Button
               variant="primary"
               size="sm"
               onClick={() => router.push("/connect")}
             >
-              Connect Repository
+              Connect GitHub
             </Button>
           </div>
         )}
@@ -168,9 +229,9 @@ export default function SettingsPage() {
             <Icon name="alert" />
           </span>
           <span className="grow">
-            <div className="set-t">Revoke GitHub access</div>
+            <div className="set-t">Disconnect GitHub account</div>
             <div className="set-s">
-              DevMind will stop receiving repository data.
+              Revoke GitHub OAuth token and disconnect your account from DevMind.
             </div>
           </span>
           <Button
@@ -178,8 +239,9 @@ export default function SettingsPage() {
             size="sm"
             id="set-revoke"
             onClick={() => setIsRevokeModalOpen(true)}
+            disabled={!githubStatus.connected}
           >
-            Revoke access
+            Disconnect GitHub
           </Button>
         </div>
       </div>
@@ -188,26 +250,27 @@ export default function SettingsPage() {
       <Modal
         open={isRevokeModalOpen}
         onClose={() => setIsRevokeModalOpen(false)}
-        title="Revoke GitHub access?"
+        title="Disconnect GitHub account?"
       >
         <p style={{ color: "var(--text-2)", fontSize: 13, lineHeight: 1.6 }}>
-          DevMind will lose the ability to read repositories for <b>medialab</b>.
-          Your intelligence map and history remain, but re-indexing stops until you
-          reconnect.
+          DevMind will remove your stored OAuth token and disconnect your GitHub account.
+          You can reconnect anytime from the Connect page.
         </p>
         <div className="modal-foot mt16" style={{ justifyContent: "flex-end" }}>
           <Button
             variant="secondary"
             onClick={() => setIsRevokeModalOpen(false)}
+            disabled={disconnecting}
           >
-            Keep access
+            Cancel
           </Button>
           <Button
             variant="danger"
             id="revoke-yes"
             onClick={handleRevokeAccess}
+            disabled={disconnecting}
           >
-            Yes, revoke
+            {disconnecting ? "Disconnecting..." : "Disconnect GitHub"}
           </Button>
         </div>
       </Modal>

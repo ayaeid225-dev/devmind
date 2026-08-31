@@ -90,8 +90,8 @@ DATABASE_URL="file:./dev.db"
 AUTH_SECRET="devmind_secret_jwt_token_key_change_in_production_32bytes"
 
 # GitHub OAuth Credentials
-GITHUB_CLIENT_ID="your_github_client_id_here"
-GITHUB_CLIENT_SECRET="your_github_client_secret_here"
+GITHUB_CLIENT_ID=Ov23liDiV39Oa9txVeP6
+GITHUB_CLIENT_SECRET=b30df65840270ed0f0d3fce5f2b84b1a096f5343
 GITHUB_REDIRECT_URI="http://localhost:3000/api/github/callback"
 
 # OpenAI AI / Embedding API Key (Optional: OpenAI key for production LLM & vectors; falls back to dev mock provider if unconfigured)

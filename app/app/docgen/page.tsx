@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Icon, Button } from "@/components/ui";
+import { Icon, Button, useToast } from "@/components/ui";
+import { useShell } from "@/lib/shell-context";
 
 const DOC_TYPES = [
   { label: "Architecture", icon: "book" },
@@ -22,52 +23,70 @@ const DOC_SOURCES = [
 ] as const;
 
 const GENERATION_STEPS = [
-  "Analyzing repository",
-  "Understanding structure",
-  "Collecting evidence",
-  "Generating documentation",
-  "Validating references",
+  "Analyzing repository code",
+  "Extracting module boundaries",
+  "Retrieving RAG evidence",
+  "Synthesizing with Gemini 3.6 Flash",
+  "Validating code citations",
 ];
-
-const STEP_DELAYS = [900, 1200, 1500, 1800, 900];
 
 export default function DocGenPage() {
   const router = useRouter();
+  const toast = useToast();
+  const { activeRepoId, activeRepo } = useShell();
+  const currentRepoId = activeRepoId || activeRepo.name;
 
   const [selectedType, setSelectedType] = useState<string>("Architecture");
   const [selectedSource, setSelectedSource] = useState<string>("Entire Repository");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [activeStepIdx, setActiveStepIdx] = useState(-1);
+  const [activeStepIdx, setActiveStepIdx] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
+  const [createdDocId, setCreatedDocId] = useState<string | null>(null);
 
-  const startGeneration = () => {
+  const startGeneration = async () => {
     setIsGenerating(true);
     setActiveStepIdx(0);
     setIsComplete(false);
-  };
 
-  useEffect(() => {
-    if (!isGenerating || isComplete) return;
+    const stepInterval = setInterval(() => {
+      setActiveStepIdx((prev) => (prev < GENERATION_STEPS.length - 1 ? prev + 1 : prev));
+    }, 1200);
 
-    if (activeStepIdx < GENERATION_STEPS.length) {
-      const delay = STEP_DELAYS[activeStepIdx] || 1000;
-      const timer = setTimeout(() => {
-        if (activeStepIdx + 1 < GENERATION_STEPS.length) {
-          setActiveStepIdx((prev) => prev + 1);
-        } else {
-          setIsGenerating(false);
-          setIsComplete(true);
-        }
-      }, delay);
+    try {
+      const res = await fetch("/api/docgen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          docType: selectedType,
+          source: selectedSource,
+          repositoryId: currentRepoId,
+        }),
+      });
 
-      return () => clearTimeout(timer);
+      const data = await res.json();
+      clearInterval(stepInterval);
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to generate documentation");
+      }
+
+      setCreatedDocId(data.data.id);
+      setIsGenerating(false);
+      setIsComplete(true);
+      toast("Generated documentation with Gemini 3.6 Flash!", "success");
+    } catch (err) {
+      clearInterval(stepInterval);
+      setIsGenerating(false);
+      const msg = err instanceof Error ? err.message : "Failed to generate document";
+      toast(msg, "error");
     }
-  }, [isGenerating, activeStepIdx, isComplete]);
+  };
 
   const resetForm = () => {
     setIsGenerating(false);
     setIsComplete(false);
-    setActiveStepIdx(-1);
+    setActiveStepIdx(0);
+    setCreatedDocId(null);
   };
 
   if (isComplete) {
@@ -83,12 +102,15 @@ export default function DocGenPage() {
           >
             <Icon name="checkCircle" className="ic-lg" />
           </span>
-          <div className="st-title">Documentation generated successfully.</div>
+          <div className="st-title">Documentation generated with Gemini 3.6 Flash!</div>
           <div className="st-sub">
-            New documentation is evidence-backed and connected to repository sources.
+            New documentation is grounded in indexed code evidence and saved to your repository docs.
           </div>
           <div className="row gap8 mt16">
-            <Button variant="primary" onClick={() => router.push("/app/docs")}>
+            <Button
+              variant="primary"
+              onClick={() => router.push(createdDocId ? `/app/docs/${createdDocId}` : "/app/docs")}
+            >
               <Icon name="book" /> View Documentation
             </Button>
             <Button variant="secondary" onClick={resetForm}>
@@ -104,9 +126,9 @@ export default function DocGenPage() {
     return (
       <div className="fade-up">
         <div className="page-head">
-          <h1 className="page-title">Generating Documentation</h1>
+          <h1 className="page-title">Generating Documentation with Gemini AI</h1>
           <p className="page-sub">
-            DevMind is reading the repository and connecting documentation to source.
+            DevMind is analyzing code evidence and synthesizing documentation via Gemini 3.6 Flash.
           </p>
         </div>
         <div className="card card-pad" style={{ maxWidth: 640 }}>
@@ -121,7 +143,7 @@ export default function DocGenPage() {
                   className={`gen-step ${isActive || isPassed ? "active" : ""}`}
                 >
                   <span className="gs-ic">
-                    <Icon name={isPassed || isActive ? "check" : "radio"} className="ic-sm" />
+                    <Icon name={isPassed ? "check" : "radio"} className="ic-sm" />
                   </span>
                   <span className="grow">{s}</span>
                 </div>
@@ -135,12 +157,10 @@ export default function DocGenPage() {
 
   return (
     <div className="fade-up">
-      {/* Page Header */}
       <div className="page-head">
         <h1 className="page-title">Generate Documentation</h1>
         <p className="page-sub">
-          DevMind reads the repository and writes evidence-backed documentation
-          connected to source.
+          DevMind reads repository code evidence and synthesizes technical documentation via Gemini 3.6 Flash.
         </p>
       </div>
 
@@ -153,7 +173,6 @@ export default function DocGenPage() {
       </div>
 
       <div className="card card-pad mb24">
-        {/* Document Type Section */}
         <div className="sec-title mb8">Document Type</div>
         <div className="gen-options" id="gen-type">
           {DOC_TYPES.map((t) => (
@@ -169,7 +188,6 @@ export default function DocGenPage() {
           ))}
         </div>
 
-        {/* Source Selection Section */}
         <div className="sec-title mb8 mt24">Select Source</div>
         <div className="gen-options" id="gen-source">
           {DOC_SOURCES.map((s) => (
@@ -185,10 +203,9 @@ export default function DocGenPage() {
           ))}
         </div>
 
-        {/* Run CTA */}
         <div className="mt24" style={{ display: "flex", justifyContent: "flex-end" }}>
           <Button variant="primary" id="gen-run" onClick={startGeneration}>
-            Generate with DevMind <Icon name="arrowRight" className="ic-sm" />
+            Generate with Gemini <Icon name="arrowRight" className="ic-sm" />
           </Button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRepositoryByName } from "@/lib/server/repositories";
 import { getCurrentUser } from "@/lib/server/auth";
-import { REPOS } from "@/data/fixtures";
+import { db } from "@/lib/server/db";
 
 export async function GET(
   request: NextRequest,
@@ -18,6 +18,7 @@ export async function GET(
       );
     }
 
+    // Try by name first (since most code passes name as the ID)
     const dbRepo = await getRepositoryByName(id);
     if (dbRepo) {
       return NextResponse.json({
@@ -26,12 +27,12 @@ export async function GET(
       });
     }
 
-    const fixtureRepo = REPOS.find((r) => r.name === id);
-    if (fixtureRepo) {
+    // Try by actual DB id
+    const dbRepoById = await db.repository.findFirst({ where: { id } });
+    if (dbRepoById) {
       return NextResponse.json({
         success: true,
-        data: fixtureRepo,
-        source: "fixture",
+        data: dbRepoById,
       });
     }
 

@@ -14,7 +14,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { repositoryId = "clinic-management", question } = body;
+    const repoId = (body.repositoryId || body.repoId)?.trim();
+    const question = body.question;
+
+    if (!repoId) {
+      return NextResponse.json(
+        { success: false, error: "Repository context (repoId) is required for AI Assistant" },
+        { status: 400 }
+      );
+    }
 
     if (!question || typeof question !== "string" || question.trim().length === 0) {
       return NextResponse.json(
@@ -30,16 +38,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Search RAG Evidence
+    // 1. Search RAG Evidence scoped strictly by repoId
     let evidence: EvidenceResultItem[] = [];
     try {
       evidence = await searchEvidence({
-        repoId: repositoryId,
+        repoId,
         query: question.trim(),
         limit: 5,
       });
     } catch {
-      // Fallback to empty evidence if repository chunk search is unavailable
+      // Fallback to empty evidence if search encounters error
     }
 
     // 2. Synthesize AI Answer using LLM Provider

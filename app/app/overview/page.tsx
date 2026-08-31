@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   Icon,
   Badge,
@@ -11,13 +11,8 @@ import {
   Input,
   type BadgeVariant,
 } from "@/components/ui";
-import {
-  REPO,
-  MODULES,
-  EDGES,
-  WORLD,
-  ASK_SUGGESTIONS,
-} from "@/data/fixtures";
+import { buildDynamicMapData } from "@/lib/map-helper";
+import { ASK_SUGGESTIONS } from "@/data/fixtures";
 import type { ModuleFixture, ModuleType } from "@/data/types";
 import {
   ProjectMapCanvas,
@@ -32,31 +27,109 @@ const BADGE_MAP: Record<ModuleType, { variant: BadgeVariant; label: string }> = 
   ext: { variant: "amber", label: "Ext" },
 };
 
-export default function OverviewPage() {
+interface RepoInfo {
+  id: string;
+  name: string;
+  owner: string;
+  defaultBranch: string;
+  filesCount: number;
+  modulesCount: number;
+  depsCount: number;
+  contributorsCount?: number;
+}
+
+function OverviewPageContent() {
   const router = useRouter();
-  const { repo, branch } = useShell();
+  const searchParams = useSearchParams();
   const mapRef = useRef<ProjectMapCanvasRef>(null);
+  const { activeRepoId, activeRepo } = useShell();
+
+  const currentRepoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
+
+  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
+  const [modulesCount, setModulesCount] = useState<number>(0);
+  const [depsCount, setDepsCount] = useState<number>(0);
+  const [devsCount, setDevsCount] = useState<number>(0);
+  const [filesCount, setFilesCount] = useState<number>(0);
+
+  const [mapData, setMapData] = useState<ReturnType<typeof buildDynamicMapData>>({
+    nodes: [],
+    edges: [],
+    world: { w: 1200, h: 800 },
+  });
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedNode, setSelectedNode] = useState<ModuleFixture | null>(null);
   const [questionInput, setQuestionInput] = useState("");
 
-  const activeRepo = repo || REPO;
-  const currentBranch = activeRepo.branch || branch || "main";
+  useEffect(() => {
+    let ignore = false;
+    async function loadOverviewData() {
+      if (!currentRepoId) return;
+
+      try {
+        const [reposRes, modsRes, depsRes, devsRes, filesRes] = await Promise.all([
+          fetch("/api/repositories"),
+          fetch(`/api/modules?repoId=${encodeURIComponent(currentRepoId)}`),
+          fetch(`/api/deps?repoId=${encodeURIComponent(currentRepoId)}`),
+          fetch(`/api/devs?repoId=${encodeURIComponent(currentRepoId)}`),
+          fetch(`/api/files?repoId=${encodeURIComponent(currentRepoId)}`),
+        ]);
+
+        const reposData = await reposRes.json();
+        const modsData = await modsRes.json();
+        const depsData = await depsRes.json();
+        const devsData = await devsRes.json();
+        const filesData = await filesRes.json();
+
+        if (!ignore) {
+          if (reposData.success && Array.isArray(reposData.data)) {
+            const found = reposData.data.find((r: RepoInfo) => r.id === currentRepoId || r.name === currentRepoId);
+            if (found) setRepoInfo(found);
+          }
+
+          const dbModules = modsData.success && Array.isArray(modsData.data) ? modsData.data : [];
+          const dbDeps = depsData.success && Array.isArray(depsData.data) ? depsData.data : [];
+          const dbDevs = devsData.success && Array.isArray(devsData.data) ? devsData.data : [];
+          const dbFiles = filesData.success && Array.isArray(filesData.data) ? filesData.data : [];
+
+          setModulesCount(dbModules.length);
+          setDepsCount(dbDeps.length);
+          setDevsCount(dbDevs.length);
+          setFilesCount(dbFiles.length);
+
+          const dynamicMap = buildDynamicMapData(dbModules, dbDeps);
+          setMapData(dynamicMap);
+        }
+      } catch (err) {
+        console.error("Overview data load error:", err);
+      }
+    }
+
+    loadOverviewData();
+
+    return () => {
+      ignore = true;
+    };
+  }, [currentRepoId]);
 
   const handleAskSubmit = (q?: string) => {
     const query = q || questionInput.trim();
     if (!query) return;
-    router.push(`/app/ask?q=${encodeURIComponent(query)}`);
+    router.push(`/app/ask?q=${encodeURIComponent(query)}&repoId=${encodeURIComponent(currentRepoId)}`);
   };
+
+  const titleName = currentRepoId
+    ? currentRepoId.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())
+    : "Project Intelligence";
 
   return (
     <div className="fade-up">
       {/* Page Header */}
       <div className="page-head">
-        <h1 className="page-title">{activeRepo.desc ? activeRepo.name.replace(/-/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()) + " Platform" : "Clinic Management Platform"}</h1>
+        <h1 className="page-title">{titleName}</h1>
         <p className="page-sub mono">
-          {currentBranch} • Analysis complete • last indexed 5 hours ago
+          {repoInfo?.defaultBranch || "main"} • Analysis complete • Connected repository: <b className="mono">{currentRepoId}</b>
         </p>
       </div>
 
@@ -64,30 +137,30 @@ export default function OverviewPage() {
       <div className="metric-grid">
         <MetricCard
           icon="file"
-          value={activeRepo.files || 248}
+          value={filesCount || repoInfo?.filesCount || 0}
           label="Files indexed"
-          delta="+12 this week"
+          delta="verified"
           deltaTone="up"
         />
         <MetricCard
           icon="modules"
-          value={activeRepo.modules || 12}
+          value={modulesCount || repoInfo?.modulesCount || 0}
           label="Modules detected"
           delta="architecture mapped"
           deltaTone="flat"
         />
         <MetricCard
           icon="deps"
-          value={activeRepo.deps || 36}
+          value={depsCount || repoInfo?.depsCount || 0}
           label="Dependencies"
-          delta="6 external"
+          delta="internal & external"
           deltaTone="flat"
         />
         <MetricCard
           icon="users"
-          value={activeRepo.contributors || 18}
+          value={devsCount || repoInfo?.contributorsCount || 0}
           label="Contributors"
-          delta="2 active today"
+          delta="tracked"
           deltaTone="up"
         />
       </div>
@@ -98,7 +171,7 @@ export default function OverviewPage() {
           <div>
             <div className="sec-title">Project Intelligence Map</div>
             <div className="sec-sub">
-              Modules, dependencies, and data flow — the structure of your codebase.
+              Modules and dependencies for <b className="mono">{currentRepoId}</b>.
             </div>
           </div>
 
@@ -119,7 +192,7 @@ export default function OverviewPage() {
             >
               Focus selection
             </Button>
-            <Link href="/app/map">
+            <Link href={`/app/map?repoId=${encodeURIComponent(currentRepoId)}`}>
               <Button variant="secondary" size="sm">
                 <Icon name="external" className="ic-sm" /> Open in Project Map
               </Button>
@@ -127,20 +200,32 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* Map Canvas with Quick Overlay */}
+        {/* Map Canvas */}
         <div className="om-canvas" id="overview-map" style={{ position: "relative", height: 420 }}>
-          <ProjectMapCanvas
-            ref={mapRef}
-            nodes={MODULES}
-            edges={EDGES}
-            world={WORLD}
-            interactive
-            minimap
-            nodeWidth={170}
-            selectedId={selectedNode?.id}
-            onSelect={setSelectedNode}
-            filterQuery={searchQuery}
-          />
+          {mapData.nodes.length === 0 ? (
+            <div className="state" style={{ height: "100%", justifyContent: "center" }}>
+              <span className="st-ic">
+                <Icon name="modules" className="ic-lg" />
+              </span>
+              <div className="st-title">No module data ingested yet</div>
+              <div className="st-sub">
+                Re-index repository {currentRepoId} to generate architecture modules.
+              </div>
+            </div>
+          ) : (
+            <ProjectMapCanvas
+              ref={mapRef}
+              nodes={mapData.nodes}
+              edges={mapData.edges}
+              world={mapData.world}
+              interactive
+              minimap
+              nodeWidth={170}
+              selectedId={selectedNode?.id}
+              onSelect={setSelectedNode}
+              filterQuery={searchQuery}
+            />
+          )}
 
           {/* Quick Selected Module Overlay Panel */}
           {selectedNode && (
@@ -158,9 +243,9 @@ export default function OverviewPage() {
               <div className="card-body" style={{ padding: 14 }}>
                 <div className="row between align-center">
                   <b style={{ fontSize: 13.5 }}>{selectedNode.name}</b>
-                  <Badge variant={BADGE_MAP[selectedNode.type].variant}>
+                  <Badge variant={BADGE_MAP[selectedNode.type]?.variant || "lime"}>
                     <span className="dot" />
-                    {BADGE_MAP[selectedNode.type].label}
+                    {BADGE_MAP[selectedNode.type]?.label || selectedNode.type}
                   </Badge>
                 </div>
                 <div className="t3 tiny mt8">{selectedNode.desc}</div>
@@ -178,7 +263,7 @@ export default function OverviewPage() {
                   <span>{(selectedNode.dependents || []).length} dependents</span>
                 </div>
                 <div className="row mt12 gap8">
-                  <Link href={`/app/modules/${selectedNode.id}`}>
+                  <Link href={`/app/modules/${selectedNode.id}?repoId=${encodeURIComponent(currentRepoId)}`}>
                     <Button variant="primary" size="sm">
                       View Module
                     </Button>
@@ -204,9 +289,9 @@ export default function OverviewPage() {
             <Icon name="brain" />
           </span>
           <div>
-            <div className="sec-title">Ask DevMind</div>
+            <div className="sec-title">Ask DevMind AI Assistant ({currentRepoId})</div>
             <div className="sec-sub">
-              Questions about this project — answered with code evidence.
+              Questions about repository <b className="mono">{currentRepoId}</b> — answered with real code evidence.
             </div>
           </div>
         </div>
@@ -227,7 +312,7 @@ export default function OverviewPage() {
         <div className="ask-input-row">
           <Input
             id="om-question"
-            placeholder="Ask anything about this project…"
+            placeholder={`Ask anything about ${currentRepoId}…`}
             value={questionInput}
             onChange={(e) => setQuestionInput(e.target.value)}
             onKeyDown={(e) => {
@@ -239,10 +324,18 @@ export default function OverviewPage() {
             id="om-ask"
             onClick={() => handleAskSubmit()}
           >
-            <Icon name="arrowRight" /> Ask
+            <Icon name="arrowRight" /> Ask AI
           </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OverviewPage() {
+  return (
+    <Suspense fallback={<div className="fade-up" />}>
+      <OverviewPageContent />
+    </Suspense>
   );
 }

@@ -6,14 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { Icon, Logo, Dropdown, type DropdownItem, useToast } from "@/components/ui";
 import { NAV_WORKSPACE, NAV_DEV, NAV_SYSTEM, metaForPath } from "@/lib/nav";
 import { courseStats, useCourseDone } from "@/lib/course";
-import { REPOS, type Repo } from "@/data/fixtures";
 import { useShell } from "@/lib/shell-context";
 
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const toast = useToast();
-  const { repo, branch, analysisDone, setRepo } = useShell();
+  const { activeRepoId, activeRepo, availableRepos, branch, analysisDone, setActiveRepoId } = useShell();
   const doneLessons = useCourseDone();
   const stats = courseStats(doneLessons);
   const shellMeta = metaForPath(pathname);
@@ -21,28 +20,36 @@ export function Sidebar() {
   const repoDropdownItems: DropdownItem[] = [
     { pick: "overview", label: "Project Overview", icon: "overview" },
     { pick: "map", label: "Open Intelligence Map", icon: "map" },
+    { pick: "select_new", label: "+ Connect New Repository", icon: "git" },
     { kind: "sep" },
-    { kind: "label", label: "Switch to" },
-    ...REPOS.map((r: Repo) => ({
-      pick: `repo:${r.name}`,
-      label: r.name,
-      icon: "git" as const,
-    })),
+    { kind: "label", label: "Switch Repository" },
+    ...(availableRepos.length > 0
+      ? availableRepos.map((r) => ({
+          pick: `repo:${r.id || r.name}`,
+          label: `${r.owner}/${r.name}`,
+          icon: "git" as const,
+        }))
+      : [
+          {
+            pick: `repo:${activeRepo.name}`,
+            label: `${activeRepo.owner}/${activeRepo.name}`,
+            icon: "git" as const,
+          },
+        ]),
   ];
 
   const handleRepoSelect = (pick: string) => {
     if (pick === "overview") {
-      router.push("/app/overview");
+      router.push(`/app/overview?repoId=${encodeURIComponent(activeRepoId || activeRepo.name)}`);
     } else if (pick === "map") {
-      router.push("/app/map");
+      router.push(`/app/map?repoId=${encodeURIComponent(activeRepoId || activeRepo.name)}`);
+    } else if (pick === "select_new") {
+      router.push("/repos");
     } else if (pick.startsWith("repo:")) {
-      const repoName = pick.slice(5);
-      const targetRepo = REPOS.find((r) => r.name === repoName);
-      if (targetRepo) {
-        setRepo(targetRepo);
-        toast(`Switched to ${targetRepo.name}`, "info");
-        router.push("/app/overview");
-      }
+      const targetId = pick.slice(5);
+      setActiveRepoId(targetId);
+      toast(`Switched workspace to ${targetId}`, "info");
+      router.push(`/app/overview?repoId=${encodeURIComponent(targetId)}`);
     }
   };
 
@@ -60,10 +67,11 @@ export function Sidebar() {
         <div className="sb-group">Workspace</div>
         {NAV_WORKSPACE.map((item) => {
           const isActive = shellMeta.active === item.id;
+          const hrefWithRepo = activeRepoId ? `${item.href}?repoId=${encodeURIComponent(activeRepoId)}` : item.href;
           return (
             <Link
               key={item.id}
-              href={item.href}
+              href={hrefWithRepo}
               className={`sb-item ${isActive ? "sb-item-active" : ""}`}
             >
               <Icon name={item.icon} />
@@ -76,10 +84,11 @@ export function Sidebar() {
         {NAV_DEV.map((item) => {
           const isActive = shellMeta.active === item.id;
           const showBadge = item.id === "learning" && stats.pct > 0;
+          const hrefWithRepo = activeRepoId ? `${item.href}?repoId=${encodeURIComponent(activeRepoId)}` : item.href;
           return (
             <Link
               key={item.id}
-              href={item.href}
+              href={hrefWithRepo}
               className={`sb-item ${isActive ? "sb-item-active" : ""}`}
             >
               <Icon name={item.icon} />
@@ -92,10 +101,11 @@ export function Sidebar() {
         <div className="sb-group">System</div>
         {NAV_SYSTEM.map((item) => {
           const isActive = shellMeta.active === item.id;
+          const hrefWithRepo = activeRepoId ? `${item.href}?repoId=${encodeURIComponent(activeRepoId)}` : item.href;
           return (
             <Link
               key={item.id}
-              href={item.href}
+              href={hrefWithRepo}
               className={`sb-item ${isActive ? "sb-item-active" : ""}`}
             >
               <Icon name={item.icon} />
@@ -114,9 +124,9 @@ export function Sidebar() {
               </span>
               <span className="grow">
                 <div className="sb-repo-name ellip">
-                  {repo.owner}/{repo.name}
+                  {activeRepo.owner}/{activeRepo.name}
                 </div>
-                <div className="sb-repo-branch">{repo.branch || branch || "main"}</div>
+                <div className="sb-repo-branch">{activeRepo.branch || branch || "main"}</div>
               </span>
             </div>
           }

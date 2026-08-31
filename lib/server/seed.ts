@@ -7,12 +7,15 @@ import {
   BRANCHES,
   MODULES,
   FILE_LIST,
+  FILES,
   DEVS,
   DOCS,
   ACTIVITY,
   DEPS_INTERNAL,
   DEPS_EXTERNAL,
 } from "@/data/fixtures";
+import { chunkFileContent } from "./rag/chunker";
+import { getEmbeddingProvider } from "./rag/provider";
 
 export async function seedDatabase() {
   console.log("Seeding DevMind database from fixtures...");
@@ -139,8 +142,15 @@ export async function seedDatabase() {
         });
       }
 
+      const createdFileRecords = [];
       for (const f of FILE_LIST) {
-        await db.fileRecord.upsert({
+        // Map to fixture code if available
+        const fixtureEntry = Object.values(FILES).find((fx) => fx.path === f.path);
+        const codeContent = fixtureEntry && fixtureEntry.code
+          ? fixtureEntry.code.lines.join("\n")
+          : `// File: ${f.path}\n// Module: ${f.module}\n// Description: Source code for ${f.path}\n`;
+
+        const fr = await db.fileRecord.upsert({
           where: {
             repoId_path: {
               repoId: repoRecord.id,
@@ -149,7 +159,7 @@ export async function seedDatabase() {
           },
           update: {
             size: f.size,
-            updatedText: f.updated,
+            updatedText: codeContent,
           },
           create: {
             repoId: repoRecord.id,
@@ -157,10 +167,75 @@ export async function seedDatabase() {
             path: f.path,
             size: f.size,
             type: "code",
-            updatedText: f.updated,
+            updatedText: codeContent,
           },
         });
+        createdFileRecords.push(fr);
       }
+
+      // Index RAG chunks for clinic-management
+      const provider = getEmbeddingProvider();
+      let totalIndexedChunks = 0;
+
+      for (const fileRecord of createdFileRecords) {
+        const generatedChunks = chunkFileContent({
+          repoId: repoRecord.id,
+          fileId: fileRecord.id,
+          moduleId: fileRecord.moduleId,
+          path: fileRecord.path,
+          content: fileRecord.updatedText || `// File content for ${fileRecord.path}`,
+        });
+
+        if (generatedChunks.length === 0) continue;
+
+        const textsToEmbed = generatedChunks.map((c) => c.content);
+        const embeddings = await provider.embedTexts(textsToEmbed);
+
+        for (let i = 0; i < generatedChunks.length; i++) {
+          const chunk = generatedChunks[i];
+          const embeddingJson = JSON.stringify(embeddings[i]);
+
+          await db.documentChunk.upsert({
+            where: {
+              repoId_path_chunkIndex: {
+                repoId: repoRecord.id,
+                path: chunk.path,
+                chunkIndex: chunk.chunkIndex,
+              },
+            },
+            update: {
+              content: chunk.content,
+              startLine: chunk.startLine,
+              endLine: chunk.endLine,
+              contentHash: chunk.contentHash,
+              embeddingJson,
+            },
+            create: {
+              repoId: repoRecord.id,
+              fileId: chunk.fileId,
+              moduleId: chunk.moduleId,
+              path: chunk.path,
+              language: chunk.language,
+              content: chunk.content,
+              startLine: chunk.startLine,
+              endLine: chunk.endLine,
+              chunkIndex: chunk.chunkIndex,
+              contentHash: chunk.contentHash,
+              embeddingJson,
+            },
+          });
+          totalIndexedChunks++;
+        }
+      }
+
+      await db.repository.update({
+        where: { id: repoRecord.id },
+        data: {
+          embeddingStatus: "COMPLETED",
+          indexedChunksCount: totalIndexedChunks,
+          embeddingCompletedAt: new Date(),
+        },
+      });
 
       for (const d of DEVS) {
         await db.developerRecord.upsert({
@@ -246,5 +321,5 @@ export async function seedDatabase() {
     }
   }
 
-  console.log("DevMind database seeded successfully!");
+  console.log("DevMind database seeded and indexed successfully!");
 }

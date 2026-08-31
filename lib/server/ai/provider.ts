@@ -2,6 +2,7 @@ import "server-only";
 import type { EvidenceResultItem } from "../rag/search";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt";
 import { validateCitations, type EvidenceCitation } from "./validate";
+import { GeminiLLMProvider } from "./gemini";
 
 export interface AIAnswerResponse {
   answer: string;
@@ -71,7 +72,6 @@ export class OpenAILLMProvider implements LLMProvider {
     const data = await res.json();
     const rawAnswer: string = data.choices[0]?.message?.content || "";
 
-    // Build citations from evidence
     const unvalidatedCitations: EvidenceCitation[] = evidence.map((item, idx) => ({
       id: `ev-${idx + 1}`,
       path: item.path,
@@ -152,11 +152,18 @@ export class DevelopmentMockLLMProvider implements LLMProvider {
 }
 
 export function getLLMProvider(): LLMProvider {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.EMBEDDING_API_KEY;
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-  if (apiKey && apiKey !== "mock_key") {
-    return new OpenAILLMProvider(apiKey, model);
+  if (geminiKey && geminiKey !== "mock_key") {
+    return new GeminiLLMProvider(geminiKey, geminiModel);
+  }
+
+  const openaiKey = process.env.OPENAI_API_KEY || process.env.EMBEDDING_API_KEY;
+  const openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+  if (openaiKey && openaiKey !== "mock_key") {
+    return new OpenAILLMProvider(openaiKey, openaiModel);
   }
 
   return new DevelopmentMockLLMProvider();

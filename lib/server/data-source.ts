@@ -1,11 +1,10 @@
 import "server-only";
-import { REPO, REPOS } from "@/data/fixtures";
 import type { Repo } from "@/data/types";
 import { getRepositories, getRepositoryByName } from "./repositories";
 
 export interface IRepositoryDataSource {
   getRepositories(): Promise<Repo[]>;
-  getActiveRepository(): Promise<Repo>;
+  getActiveRepository(repoId?: string): Promise<Repo | null>;
 }
 
 export class RepositoryDataSource implements IRepositoryDataSource {
@@ -22,18 +21,23 @@ export class RepositoryDataSource implements IRepositoryDataSource {
           contributors: r.contributorsCount,
           branch: r.defaultBranch,
           branches: r.branches.map((b) => b.name),
-          desc: r.name,
+          desc: `Repository ${r.owner}/${r.name}`,
         }));
       }
     } catch {
-      // Fallback to fixtures silently
+      // ignore error
     }
-    return REPOS;
+    return [];
   }
 
-  async getActiveRepository(): Promise<Repo> {
+  async getActiveRepository(repoId?: string): Promise<Repo | null> {
+    if (!repoId) {
+      const all = await this.getRepositories();
+      return all.length > 0 ? all[0] : null;
+    }
+
     try {
-      const dbRepo = await getRepositoryByName(REPO.name);
+      const dbRepo = await getRepositoryByName(repoId);
       if (dbRepo) {
         return {
           name: dbRepo.name,
@@ -44,13 +48,13 @@ export class RepositoryDataSource implements IRepositoryDataSource {
           contributors: dbRepo.contributorsCount,
           branch: dbRepo.defaultBranch,
           branches: dbRepo.branches.map((b) => b.name),
-          desc: dbRepo.name,
+          desc: `Repository ${dbRepo.owner}/${dbRepo.name}`,
         };
       }
     } catch {
-      // Fallback to fixture
+      // ignore error
     }
-    return REPO;
+    return null;
   }
 }
 

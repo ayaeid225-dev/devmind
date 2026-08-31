@@ -13,7 +13,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { repositoryId = "clinic-management", question } = body;
+    const repositoryId = (body.repositoryId || body.repoId)?.trim();
+    const question = body.question;
+
+    if (!repositoryId) {
+      return NextResponse.json(
+        { success: false, error: "Repository context (repoId) is required for multi-agent analysis" },
+        { status: 400 }
+      );
+    }
 
     if (!question || typeof question !== "string" || question.trim().length === 0) {
       return NextResponse.json(

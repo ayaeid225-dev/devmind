@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef, useCallback, Suspense } from "react
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Icon, Input } from "@/components/ui";
-import { ASK_SUGGESTIONS, FILES } from "@/data/fixtures";
+import { ASK_SUGGESTIONS } from "@/data/fixtures";
+import { useShell } from "@/lib/shell-context";
 
 interface EvidenceCitationItem {
   id: string;
@@ -26,6 +27,9 @@ interface ChatMessage {
 
 function AskPageContent() {
   const searchParams = useSearchParams();
+  const { activeRepoId, activeRepo } = useShell();
+
+  const currentRepoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
   const initialQ = searchParams.get("q") || "";
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -45,7 +49,7 @@ function AskPageContent() {
   }, [messages, isTyping]);
 
   const sendQuestion = useCallback(async (q: string) => {
-    if (!q || isTyping) return;
+    if (!q || isTyping || !currentRepoId) return;
 
     const userMsgId = `user-${Date.now()}`;
     const userMsg: ChatMessage = {
@@ -62,7 +66,7 @@ function AskPageContent() {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repositoryId: "clinic-management", question: q }),
+        body: JSON.stringify({ repositoryId: currentRepoId, question: q }),
       });
 
       const data = await res.json();
@@ -77,7 +81,7 @@ function AskPageContent() {
             {
               id: `ai-${Date.now()}`,
               role: "ai",
-              text: payload.answer || "No relevant code evidence was found for your question.",
+              text: payload.answer || `No relevant code evidence was found for repository ${currentRepoId}.`,
               isNoEvidence: true,
             },
           ]);
@@ -116,7 +120,7 @@ function AskPageContent() {
         },
       ]);
     }
-  }, [isTyping]);
+  }, [currentRepoId, isTyping]);
 
   useEffect(() => {
     if (initialQ && !processedInitialRef.current) {
@@ -136,7 +140,7 @@ function AskPageContent() {
             </span>
             <h1>Ask DevMind</h1>
             <p>
-              Ask anything about <b className="mono t2">clinic-management</b>.
+              Ask anything about <b className="mono t2">{currentRepoId}</b>.
               Answers are grounded in the repository — with evidence you can click.
             </p>
             <div className="ask-sugg">
@@ -175,7 +179,7 @@ function AskPageContent() {
                     <p>{m.text}</p>
                     <div className="evidence">
                       <div className="ev-label">
-                        <Icon name="info" className="ic-sm" /> No evidence found
+                        <Icon name="info" className="ic-sm" /> No evidence found for {currentRepoId}
                       </div>
                       <div className="row wrap gap8">
                         <button
@@ -188,9 +192,9 @@ function AskPageContent() {
                         <button
                           type="button"
                           className="chip"
-                          onClick={() => sendQuestion("Where is payment handled?")}
+                          onClick={() => sendQuestion("Where are modules defined?")}
                         >
-                          Try: payments
+                          Try: modules
                         </button>
                       </div>
                     </div>
@@ -220,15 +224,15 @@ function AskPageContent() {
                       <div className="ev-chips">
                         {m.citations.map((c) => {
                           const fileName = c.path.split("/").pop() || c.path;
-                          // Map to fixture evidence key if exists, else link to path
-                          const fixKey = Object.keys(FILES).find(
-                            (k) => FILES[k]?.path === c.path
-                          ) || "f-auth";
+                          // Use the real citation ID from the RAG response (DocumentChunk.id)
+                          const evidenceHref = c.id
+                            ? `/app/evidence/${c.id}?repoId=${encodeURIComponent(currentRepoId)}`
+                            : `/app/files?repoId=${encodeURIComponent(currentRepoId)}`;
 
                           return (
                             <Link
-                              key={c.id}
-                              href={`/app/evidence/${fixKey}`}
+                              key={c.id || c.path}
+                              href={evidenceHref}
                               className="ev-chip"
                               style={{ textDecoration: "none" }}
                             >
@@ -301,7 +305,7 @@ function AskPageContent() {
         <div className="ask-input-box">
           <Input
             id="ask-input"
-            placeholder="Ask DevMind about this project…"
+            placeholder={`Ask DevMind about ${currentRepoId}…`}
             autoComplete="off"
             value={inputVal}
             onChange={(e) => setInputVal(e.target.value)}

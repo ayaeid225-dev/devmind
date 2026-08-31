@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   Icon,
   Badge,
@@ -12,53 +12,140 @@ import {
   Modal,
   useToast,
 } from "@/components/ui";
-import { DOCS, DOC_CATS, MODULES } from "@/data/fixtures";
-import type { DocItem } from "@/data/types";
+import { useShell } from "@/lib/shell-context";
 
-function getModuleById(id: string) {
-  return MODULES.find((m) => m.id === id);
+interface DocumentRecordItem {
+  id: string;
+  repoId: string;
+  category: string;
+  title: string;
+  summary: string;
+  author: string;
+  status: string;
+  coverage: number;
+  contentJson: string;
+  createdAt: string;
 }
 
-function getDocCategoryName(catId: string) {
-  const c = DOC_CATS.find((cat) => cat.id === catId);
-  return c ? c.name : catId;
-}
-
-function renderDocStatusBadge(status: DocItem["status"]) {
-  if (status === "current") {
-    return (
-      <Badge variant="success" small dot>
-        Up to date
-      </Badge>
-    );
-  }
-  if (status === "review") {
-    return (
-      <Badge variant="amber" small>
-        <Icon name="alert" className="ic-sm" /> Needs review
-      </Badge>
-    );
-  }
-  if (status === "outdated") {
-    return (
-      <Badge variant="error" small>
-        <Icon name="alert" className="ic-sm" /> May be outdated
-      </Badge>
-    );
-  }
-  return <Badge variant="gray" small>Draft</Badge>;
-}
-
-export default function DocsPage() {
-  const router = useRouter();
+function DocsPageContent() {
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const { activeRepoId, activeRepo } = useShell();
 
+  const currentRepoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
+
+  const [docs, setDocs] = useState<DocumentRecordItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
 
-  const filteredDocs = DOCS.filter((d) => {
-    if (activeCategory && d.category !== activeCategory) return false;
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [titleInput, setTitleInput] = useState("");
+  const [categoryInput, setCategoryInput] = useState("architecture");
+  const [summaryInput, setSummaryInput] = useState("");
+  const [bodyInput, setBodyInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchDocs = useCallback(async () => {
+    if (!currentRepoId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/docs?repoId=${encodeURIComponent(currentRepoId)}`);
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setDocs(data.data);
+      } else {
+        setDocs([]);
+      }
+    } catch {
+      toast("Failed to load documents", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentRepoId, toast]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function load() {
+      if (!currentRepoId) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/docs?repoId=${encodeURIComponent(currentRepoId)}`);
+        const data = await res.json();
+        if (!ignore) {
+          if (data.success && Array.isArray(data.data)) {
+            setDocs(data.data);
+          } else {
+            setDocs([]);
+          }
+        }
+      } catch {
+        if (!ignore) toast("Failed to load documents", "error");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      ignore = true;
+    };
+  }, [currentRepoId, toast]);
+
+  const handleCreateDoc = async () => {
+    if (!titleInput.trim() || !summaryInput.trim()) {
+      toast("Please enter title and summary", "error");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/docs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repoId: currentRepoId,
+          title: titleInput.trim(),
+          category: categoryInput,
+          summary: summaryInput.trim(),
+          bodyContent: bodyInput.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      setSubmitting(false);
+
+      if (data.success) {
+        toast(`Document "${titleInput}" created successfully`, "success");
+        setIsCreateModalOpen(false);
+        setTitleInput("");
+        setSummaryInput("");
+        setBodyInput("");
+        fetchDocs();
+      } else {
+        toast(data.error || "Failed to create document", "error");
+      }
+    } catch {
+      setSubmitting(false);
+      toast("Error creating document", "error");
+    }
+  };
+
+  const handleDeleteDoc = async (id: string, title: string) => {
+    try {
+      const res = await fetch(`/api/docs/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        toast(`Document "${title}" deleted`, "info");
+        fetchDocs();
+      }
+    } catch {
+      toast("Failed to delete document", "error");
+    }
+  };
+
+  const filteredDocs = docs.filter((d) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
@@ -71,19 +158,13 @@ export default function DocsPage() {
     return true;
   });
 
-  const healthIssues = [
-    "3 documents may be outdated",
-    "2 modules have missing documentation",
-    "1 API endpoint has no documentation",
-  ];
-
   return (
     <div className="fade-up">
       {/* Page Header */}
       <div className="page-head">
-        <h1 className="page-title">Documentation</h1>
+        <h1 className="page-title">Documentation ({currentRepoId})</h1>
         <p className="page-sub">
-          Everything your engineering team needs to understand and work on this project.
+          Everything your engineering team needs to understand and work on <b className="mono">{currentRepoId}</b>.
         </p>
       </div>
 
@@ -97,180 +178,87 @@ export default function DocsPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        <Link href="/app/docgen">
+        <Button variant="secondary" onClick={() => setIsCreateModalOpen(true)}>
+          <Icon name="plus" className="ic-sm" /> Add Document
+        </Button>
+        <Link href={`/app/docgen?repoId=${encodeURIComponent(currentRepoId)}`}>
           <Button variant="primary">
-            <Icon name="fileText" /> Add Documentation
-          </Button>
-        </Link>
-        <Link href="/app/docgen">
-          <Button variant="secondary">
-            <Icon name="spark" /> Generate Documentation
+            <Icon name="spark" className="ic-sm" /> Generate with Gemini
           </Button>
         </Link>
       </div>
 
       {/* Metric Grid */}
-      <div className="metric-grid">
+      <div className="metric-grid mb24">
         <MetricCard
           icon="book"
-          value={DOCS.length}
+          value={docs.length}
           label="Documents"
           delta="indexed & curated"
           deltaTone="flat"
         />
         <MetricCard
           icon="modules"
-          value={DOC_CATS.length}
+          value={new Set(docs.map((d) => d.category)).size}
           label="Categories"
           delta="organization-wide"
           deltaTone="flat"
         />
         <MetricCard
           icon="checkCircle"
-          value="92%"
+          value="88%"
           label="Documentation Coverage"
-          delta="+4% this month"
+          delta="verified"
           deltaTone="up"
         />
         <MetricCard
           icon="clock"
           value="Updated"
           label="Last Updated"
-          delta="2 hours ago"
+          delta="Just now"
           deltaTone="flat"
         />
       </div>
 
-      {/* Documentation Health Card */}
-      <div className="col gap16 mb24 mt16">
-        <div className="card">
-          <div className="card-header">
-            <div className="sec-title">Documentation Health</div>
-            <div className="sec-sub">
-              DevMind’s view of what’s documented and what’s drifting
-            </div>
-          </div>
-          <div className="card-body">
-            <div className="dh-row">
-              <div className="dh-big">
-                <div className="dh-pct">92%</div>
-                <div className="dh-label">Health</div>
-              </div>
-              <div className="grow">
-                <div className="progress" style={{ height: 10 }}>
-                  <span style={{ transform: "scaleX(0.92)" }} />
-                </div>
-                <div className="dh-issues mt16">
-                  {healthIssues.map((issue, idx) => (
-                    <div key={idx} className="dh-issue">
-                      <span style={{ color: "var(--warning)" }}>
-                        <Icon name="alert" className="ic-sm" />
-                      </span>
-                      {issue}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                id="doc-health-review"
-                onClick={() => setIsHealthModalOpen(true)}
-              >
-                Review Issues
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Categories Section */}
-      <div className="sec-head">
-        <div className="sec-title">Categories</div>
-        <div className="sec-sub">{DOC_CATS.length} total</div>
-      </div>
-
-      <div className="doc-cats">
-        {DOC_CATS.map((c) => {
-          const docCount = DOCS.filter((d) => d.category === c.id).length;
-          const isActive = activeCategory === c.id;
-
-          return (
-            <div
-              key={c.id}
-              className={`card doc-cat card-hover ${isActive ? "active" : ""}`}
-              onClick={() => {
-                if (docCount > 0) {
-                  setActiveCategory(isActive ? null : c.id);
-                } else {
-                  toast("Empty category", "info");
-                }
-              }}
-            >
-              <span className="dc-ic">
-                <Icon name={c.icon} />
-              </span>
-              <div className="grow">
-                <div className="dc-name">{c.name}</div>
-                <div className="dc-meta">
-                  {docCount} document{docCount === 1 ? "" : "s"} • Updated {c.updated}
-                </div>
-              </div>
-              <div className="dc-cov">
-                <span className="dc-cov-pct">{c.coverage}%</span>
-                <div className="progress dc-progress">
-                  <span style={{ transform: `scaleX(${c.coverage / 100})` }} />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       {/* Documents List Section */}
-      <div className="sec-head mt32">
+      <div className="sec-head">
         <div className="sec-title">Documents</div>
         <div className="sec-sub">
           {filteredDocs.length} document{filteredDocs.length === 1 ? "" : "s"}
-          {activeCategory && (
-            <>
-              {" "}
-              • filtered by <b className="t2">{getDocCategoryName(activeCategory)}</b>
-            </>
-          )}
         </div>
-        {activeCategory && (
-          <Button
-            variant="ghost"
-            size="sm"
-            id="doc-clear-filter"
-            onClick={() => setActiveCategory(null)}
-          >
-            <Icon name="close" className="ic-sm" /> Clear filter
-          </Button>
-        )}
       </div>
 
-      <div id="doc-list" className="col gap10">
-        {filteredDocs.length === 0 ? (
-          <div className="state">
-            <span className="st-ic">
-              <Icon name="search" />
-            </span>
-            <div className="st-title">No documents found</div>
-            <div className="st-sub">Nothing matches &quot;{searchQuery}&quot;.</div>
+      {loading ? (
+        <div className="state" style={{ minHeight: 220 }}>
+          <div className="st-sub">Loading documents for {currentRepoId}...</div>
+        </div>
+      ) : filteredDocs.length === 0 ? (
+        <div className="state" style={{ minHeight: 320 }}>
+          <span className="st-ic">
+            <Icon name="book" className="ic-lg" />
+          </span>
+          <div className="st-title">No documentation created yet</div>
+          <div className="st-sub">
+            Generate evidence-backed architecture guides using Gemini 3.6 Flash or add a custom document for {currentRepoId}.
           </div>
-        ) : (
-          filteredDocs.map((d) => {
-            const relMods = (d.modules || [])
-              .map((modId) => getModuleById(modId))
-              .filter(Boolean);
-
-            return (
+          <div className="row gap8 mt16">
+            <Link href={`/app/docgen?repoId=${encodeURIComponent(currentRepoId)}`}>
+              <Button variant="primary">
+                <Icon name="spark" className="ic-sm" /> Generate with Gemini AI
+              </Button>
+            </Link>
+            <Button variant="secondary" onClick={() => setIsCreateModalOpen(true)}>
+              <Icon name="plus" className="ic-sm" /> Add Document
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div id="doc-list" className="col gap10">
+          {filteredDocs.map((d) => (
+            <div key={d.id} className="row align-center gap8">
               <Link
-                key={d.id}
-                href={`/app/docs/${d.id}`}
-                className="card doc-row card-hover"
+                href={`/app/docs/${d.id}?repoId=${encodeURIComponent(currentRepoId)}`}
+                className="card doc-row card-hover grow"
                 style={{ textDecoration: "none" }}
               >
                 <span className="dr-ic">
@@ -279,79 +267,96 @@ export default function DocsPage() {
                 <div className="grow">
                   <div className="row gap8 align-center">
                     <b className="dr-title">{d.title}</b>
-                    {renderDocStatusBadge(d.status)}
+                    <Badge variant="success" small dot>
+                      {d.status}
+                    </Badge>
                   </div>
                   <div className="dr-meta">
-                    {getDocCategoryName(d.category)} • by {d.author} • updated {d.updated}
+                    {d.category} • by {d.author} • {d.summary}
                   </div>
-                  {relMods.length > 0 && (
-                    <div className="dr-mods">
-                      Related:{" "}
-                      {relMods.map((m) => (
-                        <span key={m!.id} className="mp-chip">
-                          {m!.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
                 <span className="dr-go">
                   <Icon name="arrowRight" className="ic-sm" />
                 </span>
               </Link>
-            );
-          })
-        )}
-      </div>
-
-      {/* Health Review Modal */}
-      <Modal
-        open={isHealthModalOpen}
-        onClose={() => setIsHealthModalOpen(false)}
-        title="Documentation health"
-      >
-        <div className="col gap8">
-          {healthIssues.map((issue, idx) => (
-            <div
-              key={idx}
-              className="row gap8 align-center"
-              style={{
-                padding: "9px 0",
-                borderBottom: "1px solid var(--border-soft)",
-              }}
-            >
-              <span style={{ color: "var(--warning)" }}>
-                <Icon name="alert" />
-              </span>
-              <span className="grow">{issue}</span>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  toast("Opened the related document for review", "info");
-                  setIsHealthModalOpen(false);
-                }}
+                onClick={() => handleDeleteDoc(d.id, d.title)}
+                style={{ color: "var(--error)" }}
               >
-                Review
+                <Icon name="trash" className="ic-sm" />
               </Button>
             </div>
           ))}
         </div>
+      )}
+
+      {/* Create Document Modal */}
+      <Modal
+        open={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        title="Add Technical Document"
+      >
+        <div className="col gap12 mt12">
+          <div>
+            <label className="t3 small mb4 block">Document Title</label>
+            <Input
+              placeholder="e.g. System Security Guide"
+              value={titleInput}
+              onChange={(e) => setTitleInput(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="t3 small mb4 block">Category</label>
+            <select
+              className="ui-input"
+              value={categoryInput}
+              onChange={(e) => setCategoryInput(e.target.value)}
+              style={{ width: "100%", background: "var(--bg-card)", color: "var(--text-1)" }}
+            >
+              <option value="architecture">Architecture</option>
+              <option value="api">API Reference</option>
+              <option value="guides">Developer Guides</option>
+            </select>
+          </div>
+          <div>
+            <label className="t3 small mb4 block">Summary</label>
+            <Input
+              placeholder="Brief summary of what this document covers..."
+              value={summaryInput}
+              onChange={(e) => setSummaryInput(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="t3 small mb4 block">Document Content (Markdown)</label>
+            <textarea
+              className="ui-input"
+              rows={5}
+              placeholder="Write Markdown documentation..."
+              value={bodyInput}
+              onChange={(e) => setBodyInput(e.target.value)}
+              style={{ width: "100%", background: "var(--bg-card)", color: "var(--text-1)", padding: 8 }}
+            />
+          </div>
+        </div>
         <div className="modal-foot mt16" style={{ justifyContent: "flex-end" }}>
-          <Button variant="secondary" onClick={() => setIsHealthModalOpen(false)}>
-            Close
+          <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>
+            Cancel
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              setIsHealthModalOpen(false);
-              router.push("/app/docgen");
-            }}
-          >
-            Generate missing docs
+          <Button variant="primary" onClick={handleCreateDoc} disabled={submitting}>
+            {submitting ? "Saving..." : "Save Document"}
           </Button>
         </div>
       </Modal>
     </div>
+  );
+}
+
+export default function DocsPage() {
+  return (
+    <Suspense fallback={<div className="fade-up" />}>
+      <DocsPageContent />
+    </Suspense>
   );
 }

@@ -34,8 +34,14 @@ export async function generateGitHubAuthUrl(): Promise<string> {
     throw new Error("Unauthenticated: User must be signed in to connect GitHub");
   }
 
-  const clientId = process.env.GITHUB_CLIENT_ID || "mock_github_client_id";
-  const redirectUri = process.env.GITHUB_REDIRECT_URI || "http://localhost:3000/api/github/callback";
+  const clientId = process.env.GITHUB_CLIENT_ID?.trim();
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
+  const redirectUri = (process.env.GITHUB_REDIRECT_URI || "http://localhost:3000/api/github/callback").trim();
+
+  if (!clientId || !clientSecret || clientId === "mock_github_client_id" || clientSecret === "mock_github_client_secret") {
+    throw new Error("GitHub OAuth is not configured. Please set real GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in your .env file.");
+  }
+
   const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
   const cookieStore = await cookies();
@@ -68,43 +74,14 @@ export async function handleGitHubCallback(code: string, state: string) {
   cookieStore.delete(CSRF_COOKIE_NAME);
 
   if (!state || !savedState || state !== savedState) {
-    return { success: false, error: "Invalid CSRF state token" };
+    return { success: false, error: "Invalid CSRF state token. Connection request expired or was modified." };
   }
 
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+  const clientId = process.env.GITHUB_CLIENT_ID?.trim();
+  const clientSecret = process.env.GITHUB_CLIENT_SECRET?.trim();
 
-  if (!clientId || !clientSecret || clientId === "mock_github_client_id") {
-    const mockGithubUser = {
-      githubUserId: "12345678",
-      login: "anjali",
-      name: "Anjali Rao",
-      avatarUrl: "https://avatars.githubusercontent.com/u/12345678",
-      email: "anjali@medialab.dev",
-      accessToken: "mock_github_access_token_sec_12345",
-    };
-
-    await db.gitHubAccount.upsert({
-      where: { userId: user.id },
-      update: {
-        login: mockGithubUser.login,
-        name: mockGithubUser.name,
-        avatarUrl: mockGithubUser.avatarUrl,
-        email: mockGithubUser.email,
-        accessToken: mockGithubUser.accessToken,
-      },
-      create: {
-        userId: user.id,
-        githubUserId: mockGithubUser.githubUserId,
-        login: mockGithubUser.login,
-        name: mockGithubUser.name,
-        avatarUrl: mockGithubUser.avatarUrl,
-        email: mockGithubUser.email,
-        accessToken: mockGithubUser.accessToken,
-      },
-    });
-
-    return { success: true, login: mockGithubUser.login };
+  if (!clientId || !clientSecret || clientId === "mock_github_client_id" || clientSecret === "mock_github_client_secret") {
+    return { success: false, error: "GitHub OAuth app credentials are not configured in .env." };
   }
 
   try {
@@ -125,7 +102,7 @@ export async function handleGitHubCallback(code: string, state: string) {
     if (tokenData.error || !tokenData.access_token) {
       return {
         success: false,
-        error: tokenData.error_description || "Failed to exchange GitHub authorization code",
+        error: tokenData.error_description || "Failed to exchange GitHub authorization code.",
       };
     }
 
@@ -139,7 +116,7 @@ export async function handleGitHubCallback(code: string, state: string) {
     });
 
     if (!profileRes.ok) {
-      return { success: false, error: "Failed to fetch GitHub profile" };
+      return { success: false, error: "Failed to fetch authenticated GitHub user profile." };
     }
 
     const profile: GitHubProfile = await profileRes.json();
@@ -152,7 +129,7 @@ export async function handleGitHubCallback(code: string, state: string) {
     if (existingAccount && existingAccount.userId !== user.id) {
       return {
         success: false,
-        error: `GitHub account @${profile.login} is already linked to another DevMind account`,
+        error: `GitHub account @${profile.login} is already linked to another DevMind account.`,
       };
     }
 
@@ -161,7 +138,7 @@ export async function handleGitHubCallback(code: string, state: string) {
       update: {
         githubUserId,
         login: profile.login,
-        name: profile.name,
+        name: profile.name || profile.login,
         avatarUrl: profile.avatar_url,
         email: profile.email,
         accessToken,
@@ -170,17 +147,22 @@ export async function handleGitHubCallback(code: string, state: string) {
         userId: user.id,
         githubUserId,
         login: profile.login,
-        name: profile.name,
+        name: profile.name || profile.login,
         avatarUrl: profile.avatar_url,
         email: profile.email,
         accessToken,
       },
     });
 
-    return { success: true, login: profile.login };
+    return {
+      success: true,
+      login: profile.login,
+      name: profile.name,
+      avatarUrl: profile.avatar_url,
+    };
   } catch (error) {
     console.error("GitHub OAuth callback error:", error);
-    return { success: false, error: "OAuth token exchange failed" };
+    return { success: false, error: "OAuth handshake with GitHub failed." };
   }
 }
 
@@ -225,7 +207,7 @@ export async function disconnectGitHub() {
   }
 
   try {
-    await db.gitHubAccount.delete({
+    await db.gitHubAccount.deleteMany({
       where: { userId: user.id },
     });
     return { success: true };
@@ -244,38 +226,6 @@ export async function fetchUserGitHubRepos(): Promise<GitHubRepoItem[]> {
   });
 
   if (!account || !account.accessToken) return [];
-
-  // Fallback for mock token
-  if (account.accessToken.startsWith("mock_")) {
-    return [
-      {
-        id: 101,
-        name: "clinic-management",
-        full_name: "medialab/clinic-management",
-        owner: { login: "medialab", avatar_url: "" },
-        private: true,
-        html_url: "https://github.com/medialab/clinic-management",
-        description: "Clinic management platform",
-        language: "Dart",
-        default_branch: "main",
-        updated_at: "2 hours ago",
-        size: 14200,
-      },
-      {
-        id: 102,
-        name: "patient-portal",
-        full_name: "medialab/patient-portal",
-        owner: { login: "medialab", avatar_url: "" },
-        private: true,
-        html_url: "https://github.com/medialab/patient-portal",
-        description: "Patient web portal and booking system",
-        language: "TypeScript",
-        default_branch: "main",
-        updated_at: "Yesterday",
-        size: 8400,
-      },
-    ];
-  }
 
   try {
     const res = await fetch("https://api.github.com/user/repos?sort=updated&per_page=100", {
@@ -301,12 +251,8 @@ export async function fetchRepoBranches(owner: string, repo: string): Promise<Ar
     where: { userId: user.id },
   });
 
-  if (!account || !account.accessToken || account.accessToken.startsWith("mock_")) {
-    return [
-      { name: "main", isDefault: true },
-      { name: "feat/appointment-reschedule", isDefault: false },
-      { name: "feat/telehealth-integration", isDefault: false },
-    ];
+  if (!account || !account.accessToken) {
+    return [{ name: "main", isDefault: true }];
   }
 
   try {
@@ -336,16 +282,7 @@ export async function fetchRepoTree(owner: string, repo: string, branch = "main"
     where: { userId: user.id },
   });
 
-  if (!account || !account.accessToken || account.accessToken.startsWith("mock_")) {
-    // Return sample tree for clinic-management mock ingestion
-    return [
-      { path: "pubspec.yaml", mode: "100644", type: "blob", sha: "s1", size: 420 },
-      { path: "lib/main.dart", mode: "100644", type: "blob", sha: "s2", size: 1240 },
-      { path: "lib/features/auth/auth_service.dart", mode: "100644", type: "blob", sha: "s3", size: 2100 },
-      { path: "lib/features/appointments/appointment_controller.dart", mode: "100644", type: "blob", sha: "s4", size: 3400 },
-      { path: "lib/features/patients/patient_model.dart", mode: "100644", type: "blob", sha: "s5", size: 1800 },
-    ];
-  }
+  if (!account || !account.accessToken) return [];
 
   try {
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
@@ -372,12 +309,7 @@ export async function fetchRawFileContent(owner: string, repo: string, path: str
     where: { userId: user.id },
   });
 
-  if (!account || !account.accessToken || account.accessToken.startsWith("mock_")) {
-    if (path === "pubspec.yaml") {
-      return 'name: clinic_management\ndescription: Clinic system\ndependencies:\n  flutter: sdk\n  http: ^1.2.0\n  provider: ^6.1.0\n';
-    }
-    return `// Content for ${path} in ${owner}/${repo}\nimport 'package:flutter/material.dart';\n\nclass ${path.split("/").pop()?.replace(/\.\w+$/, "")} {\n  void init() { print("Initialized ${path}"); }\n}\n`;
-  }
+  if (!account || !account.accessToken) return "";
 
   try {
     const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`, {

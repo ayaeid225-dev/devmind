@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   Icon,
   Badge,
@@ -10,12 +10,13 @@ import {
   Input,
   type BadgeVariant,
 } from "@/components/ui";
-import { MODULES, EDGES, WORLD } from "@/data/fixtures";
+import { buildDynamicMapData } from "@/lib/map-helper";
 import type { ModuleFixture, ModuleType } from "@/data/types";
 import {
   ProjectMapCanvas,
   type ProjectMapCanvasRef,
 } from "@/components/map";
+import { useShell } from "@/lib/shell-context";
 
 const BADGE_MAP: Record<ModuleType, { variant: BadgeVariant; label: string }> = {
   core: { variant: "lime", label: "Core" },
@@ -24,20 +25,68 @@ const BADGE_MAP: Record<ModuleType, { variant: BadgeVariant; label: string }> = 
   ext: { variant: "amber", label: "Ext" },
 };
 
-function getModuleById(id: string): ModuleFixture | undefined {
-  return MODULES.find((m) => m.id === id);
-}
-
-export default function MapPage() {
+function MapPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const mapRef = useRef<ProjectMapCanvasRef>(null);
+  const { activeRepoId, activeRepo } = useShell();
+
+  const currentRepoId = searchParams.get("repoId") || activeRepoId || activeRepo.name;
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [selectedNode, setSelectedNode] = useState<ModuleFixture | null>(null);
 
-  // Check if any modules match active search query and type filter
-  const hasMatches = MODULES.some((n) => {
+  const [mapData, setMapData] = useState<ReturnType<typeof buildDynamicMapData>>({
+    nodes: [],
+    edges: [],
+    world: { w: 1200, h: 800 },
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let ignore = false;
+    async function fetchMapData() {
+      if (!currentRepoId) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      try {
+        const [modsRes, depsRes] = await Promise.all([
+          fetch(`/api/modules?repoId=${encodeURIComponent(currentRepoId)}`),
+          fetch(`/api/deps?repoId=${encodeURIComponent(currentRepoId)}`),
+        ]);
+        const modsData = await modsRes.json();
+        const depsData = await depsRes.json();
+
+        if (!ignore) {
+          const dbModules = modsData.success && Array.isArray(modsData.data) ? modsData.data : [];
+          const dbDeps = depsData.success && Array.isArray(depsData.data) ? depsData.data : [];
+
+          const dynamicData = buildDynamicMapData(dbModules, dbDeps);
+          setMapData(dynamicData);
+        }
+      } catch {
+        if (!ignore) {
+          setMapData({ nodes: [], edges: [], world: { w: 1200, h: 800 } });
+        }
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+
+    fetchMapData();
+    return () => {
+      ignore = true;
+    };
+  }, [currentRepoId]);
+
+  const getModuleById = (id: string): ModuleFixture | undefined => {
+    return mapData.nodes.find((m) => m.id === id);
+  };
+
+  const hasMatches = mapData.nodes.some((n) => {
     if (filterType !== "all" && n.type !== filterType) return false;
     if (
       searchQuery &&
@@ -53,9 +102,9 @@ export default function MapPage() {
     <div className="map-screen">
       {/* Map Toolbar */}
       <div className="map-toolbar">
-        <Link href="/app/overview">
+        <Link href={`/app/overview?repoId=${encodeURIComponent(currentRepoId)}`}>
           <Button variant="ghost" size="sm">
-            <Icon name="arrowLeft" className="ic-sm" /> Overview
+            <Icon name="arrowLeft" className="ic-sm" /> Overview ({currentRepoId})
           </Button>
         </Link>
 
@@ -73,7 +122,7 @@ export default function MapPage() {
             className={`chip ${filterType === "all" ? "chip-active" : ""}`}
             onClick={() => setFilterType("all")}
           >
-            All
+            All ({mapData.nodes.length})
           </button>
           <button
             type="button"
@@ -141,25 +190,31 @@ export default function MapPage() {
           </Button>
         </div>
 
-        <div className="map-empty">
-          <Icon name="search" /> <span>No modules match your search.</span>
-        </div>
-
-        <div id="fm-canvas" style={{ width: "100%", height: "100%" }}>
-          <ProjectMapCanvas
-            ref={mapRef}
-            nodes={MODULES}
-            edges={EDGES}
-            world={WORLD}
-            interactive
-            minimap
-            nodeWidth={170}
-            selectedId={selectedNode?.id}
-            onSelect={setSelectedNode}
-            filterQuery={searchQuery}
-            filterType={filterType}
-          />
-        </div>
+        {loading ? (
+          <div className="state" style={{ minHeight: 320 }}>
+            <div className="st-sub">Building intelligence map for {currentRepoId}...</div>
+          </div>
+        ) : !hasMatches ? (
+          <div className="map-empty">
+            <Icon name="search" /> <span>No modules found for repository &quot;{currentRepoId}&quot;.</span>
+          </div>
+        ) : (
+          <div id="fm-canvas" style={{ width: "100%", height: "100%" }}>
+            <ProjectMapCanvas
+              ref={mapRef}
+              nodes={mapData.nodes}
+              edges={mapData.edges}
+              world={mapData.world}
+              interactive
+              minimap
+              nodeWidth={170}
+              selectedId={selectedNode?.id}
+              onSelect={setSelectedNode}
+              filterQuery={searchQuery}
+              filterType={filterType}
+            />
+          </div>
+        )}
 
         {/* Slide-over Module Detail Side Panel */}
         <div className={`map-panel ${selectedNode ? "open" : ""}`} id="fm-panel">
@@ -174,9 +229,9 @@ export default function MapPage() {
                 </div>
 
                 <div className="row gap8 align-center">
-                  <Badge variant={BADGE_MAP[selectedNode.type].variant}>
+                  <Badge variant={BADGE_MAP[selectedNode.type]?.variant || "gray"}>
                     <span className="dot" />
-                    {BADGE_MAP[selectedNode.type].label}
+                    {BADGE_MAP[selectedNode.type]?.label || selectedNode.type}
                   </Badge>
                   <button
                     type="button"
@@ -201,24 +256,6 @@ export default function MapPage() {
                   </p>
                 </div>
 
-                {/* Key Functions Block */}
-                {selectedNode.keyFns && selectedNode.keyFns.length > 0 && (
-                  <div className="mp-block">
-                    <div className="mp-block-t">Key functions</div>
-                    <div className="col gap8">
-                      {selectedNode.keyFns.map((fn, idx) => (
-                        <div key={idx} className="fn-row">
-                          <span className="grow">
-                            <div className="fn-name">{fn[0]}</div>
-                            <div className="fn-sig">{fn[1]}</div>
-                          </span>
-                          <Icon name="code" className="ic-sm" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 {/* Dependencies Block */}
                 {selectedNode.deps && selectedNode.deps.length > 0 && (
                   <div className="mp-block">
@@ -226,14 +263,13 @@ export default function MapPage() {
                     <div className="row wrap gap8">
                       {selectedNode.deps.map((depId) => {
                         const target = getModuleById(depId);
-                        if (!target) return null;
                         return (
                           <span
                             key={depId}
                             className="mp-chip"
-                            onClick={() => router.push(`/app/modules/${depId}`)}
+                            onClick={() => router.push(`/app/modules/${depId}?repoId=${encodeURIComponent(currentRepoId)}`)}
                           >
-                            {target.name}
+                            {target ? target.name : depId}
                           </span>
                         );
                       })}
@@ -248,36 +284,13 @@ export default function MapPage() {
                     <div className="row wrap gap8">
                       {selectedNode.dependents.map((depId) => {
                         const target = getModuleById(depId);
-                        if (!target) return null;
                         return (
                           <span
                             key={depId}
                             className="mp-chip"
-                            onClick={() => router.push(`/app/modules/${depId}`)}
+                            onClick={() => router.push(`/app/modules/${depId}?repoId=${encodeURIComponent(currentRepoId)}`)}
                           >
-                            {target.name}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Related Modules Block */}
-                {selectedNode.related && selectedNode.related.length > 0 && (
-                  <div className="mp-block">
-                    <div className="mp-block-t">Related modules</div>
-                    <div className="row wrap gap8">
-                      {selectedNode.related.map((relId) => {
-                        const target = getModuleById(relId);
-                        if (!target) return null;
-                        return (
-                          <span
-                            key={relId}
-                            className="mp-chip"
-                            onClick={() => router.push(`/app/modules/${relId}`)}
-                          >
-                            {target.name}
+                            {target ? target.name : depId}
                           </span>
                         );
                       })}
@@ -300,7 +313,7 @@ export default function MapPage() {
               {/* Panel Footer */}
               <div className="mp-foot">
                 <Link
-                  href={`/app/modules/${selectedNode.id}`}
+                  href={`/app/modules/${selectedNode.id}?repoId=${encodeURIComponent(currentRepoId)}`}
                   className="btn btn-primary btn-block"
                 >
                   View Module <Icon name="arrowRight" className="ic-sm" />
@@ -311,5 +324,13 @@ export default function MapPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={<div className="fade-up" />}>
+      <MapPageContent />
+    </Suspense>
   );
 }
