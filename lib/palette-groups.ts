@@ -1,146 +1,195 @@
-import type { PaletteGroup } from "@/components/ui";
-import {
-  ADRS,
-  DEPS_EXTERNAL,
-  DEVS,
-  DOC_CATS,
-  DOCS,
-  EVIDENCE_ID_BY_PATH,
-  FILE_LIST,
-  MODULES,
-  PATH,
-  QA,
-} from "@/data/fixtures";
+import type { PaletteGroup, PaletteItem } from "@/components/ui";
 
-/*
- * Port of ui.js U.renderPaletteResults() group construction. The router
- * navigation is injected as `go` so this stays framework-only here.
- * Per-source caps from the prototype live on each group (`max`) and are
- * enforced by CommandPalette at rest state too.
+export interface SearchPaletteItem {
+  id: string;
+  type: "file" | "chunk" | "module" | "doc" | "symbol";
+  title: string;
+  path: string;
+  snippet?: string;
+  startLine?: number;
+  endLine?: number;
+  language?: string;
+  moduleId?: string | null;
+  moduleName?: string;
+  score: number;
+  url: string;
+  icon: "file" | "code" | "modules" | "fileText" | "spark";
+  cat: string;
+}
+
+export interface RepoContext {
+  id?: string | null;
+  name: string;
+  owner?: string;
+  defaultBranch?: string;
+  modules?: Array<{ id: string; name: string; filesCount?: number; type?: string }>;
+}
+
+/**
+ * Builds command palette groups dynamically from real semantic search results.
+ * Respects strict repository scoping and displays real metadata.
  */
-export function buildPaletteGroups(go: (href: string) => void): PaletteGroup[] {
-  return [
-    {
+export function buildPaletteGroupsFromSearchResults(
+  results: readonly SearchPaletteItem[],
+  query: string,
+  repoContext: RepoContext,
+  go: (href: string) => void
+): PaletteGroup[] {
+  const repoId = repoContext.id || repoContext.name;
+  const groups: PaletteGroup[] = [];
+
+  const fileItems: PaletteItem[] = [];
+  const codeItems: PaletteItem[] = [];
+  const moduleItems: PaletteItem[] = [];
+  const docItems: PaletteItem[] = [];
+  const symbolItems: PaletteItem[] = [];
+
+  for (const item of results) {
+    const paletteItem: PaletteItem = {
+      id: item.id,
+      icon: item.icon,
+      name: item.title,
+      sub: item.snippet ? `${item.path} — ${item.snippet}` : item.path,
+      cat: item.cat,
+      keywords: `${item.path} ${item.moduleName || ""} ${item.language || ""}`,
+      onSelect: () => go(item.url),
+    };
+
+    if (item.type === "file") {
+      fileItems.push(paletteItem);
+    } else if (item.type === "chunk") {
+      codeItems.push(paletteItem);
+    } else if (item.type === "module") {
+      moduleItems.push(paletteItem);
+    } else if (item.type === "doc") {
+      docItems.push(paletteItem);
+    } else if (item.type === "symbol") {
+      symbolItems.push(paletteItem);
+    }
+  }
+
+  if (fileItems.length > 0) {
+    groups.push({
       label: "Files",
-      max: 4,
-      items: FILE_LIST.map((f) => ({
-        id: `file:${f.path}`,
-        icon: "file" as const,
-        name: f.path.split("/").pop() ?? f.path,
-        sub: f.path,
-        cat: "File",
-        keywords: f.module,
-        onSelect: () =>
-          go(`/app/evidence/${EVIDENCE_ID_BY_PATH[f.path] ?? "appointment_service"}`),
-      })),
-    },
-    {
+      items: fileItems,
+    });
+  }
+
+  if (codeItems.length > 0) {
+    groups.push({
+      label: "Code & Semantic Evidence",
+      items: codeItems,
+    });
+  }
+
+  if (symbolItems.length > 0) {
+    groups.push({
+      label: "Code Symbols",
+      items: symbolItems,
+    });
+  }
+
+  if (moduleItems.length > 0) {
+    groups.push({
       label: "Modules",
-      items: MODULES.filter((m) => m.type !== "ext" && m.type !== "db").map((m) => ({
-        id: `module:${m.id}`,
-        icon: "modules" as const,
-        name: m.name,
-        sub: `${m.type} module \u2022 ${m.files} files`,
-        cat: "Module",
-        keywords: m.id,
-        onSelect: () => go(`/app/module/${m.id}`),
-      })),
-    },
-    {
-      label: "Dependencies",
-      items: DEPS_EXTERNAL.map((d) => ({
-        id: `dep:${d.name}`,
-        icon: "packages" as const,
-        name: d.name,
-        sub: d.purpose,
-        cat: "Dep",
-        onSelect: () => go("/app/deps"),
-      })),
-    },
-    {
-      label: "Course lessons",
-      items: PATH.flatMap((st) =>
-        st.lessons.map((l) => ({
-          id: `lesson:${st.id}/${l.id}`,
-          icon: "learning" as const,
-          name: l.title,
-          sub: `${st.title} \u2022 Course lesson`,
-          cat: "Lesson",
-          keywords: `${st.title} learning course lesson path`,
-          onSelect: () => go(`/app/lesson/${st.id}/${l.id}`),
-        }))
-      ),
-    },
-    {
+      items: moduleItems,
+    });
+  }
+
+  if (docItems.length > 0) {
+    groups.push({
       label: "Documentation",
-      max: 4,
-      items: DOCS.map((d) => ({
-        id: `doc:${d.id}`,
-        icon: "book" as const,
-        name: d.title,
-        sub: `${DOC_CATS.find((c) => c.id === d.category)?.name ?? d.category} \u2022 ${d.updated}`,
-        cat: "Doc",
-        keywords: `${d.category} ${d.summary}`,
-        onSelect: () => go(`/app/doc/${d.id}`),
-      })),
-    },
-    {
-      label: "Architecture decisions",
-      max: 3,
-      items: ADRS.map((a) => ({
-        id: `adr:${a.id}`,
-        icon: "branch" as const,
-        name: `${a.id} \u2014 ${a.title}`,
-        sub: `${a.status} \u2022 ${a.summary}`,
-        cat: "ADR",
-        keywords: a.id,
-        onSelect: () => go(`/app/doc/${a.id}`),
-      })),
-    },
-    {
-      label: "Developers",
-      max: 4,
-      items: DEVS.map((d) => ({
-        id: `dev:${d.id}`,
-        icon: "users" as const,
-        name: d.name,
-        sub: `${d.role} \u2022 ${d.coverage}% knowledge coverage`,
-        cat: "Dev",
-        keywords: `${d.role} ${d.strongAreas.join(" ")} ${d.modules
-          .map((mid) => MODULES.find((m) => m.id === mid)?.name ?? mid)
-          .join(" ")}`,
-        onSelect: () => go(`/app/dev/${d.id}`),
-      })),
-    },
-    {
-      label: "Actions",
+      items: docItems,
+    });
+  }
+
+  // Ask DevMind Action for natural-language questions
+  if (query.trim().length > 0) {
+    groups.push({
+      label: "AI Assistant",
       items: [
-        { icon: "ask" as const, name: "Ask DevMind anything", sub: "Search the project with AI", href: "/app/ask", cat: "Ask" },
-        { icon: "learning" as const, name: "Open Learning Path", sub: "Text-based onboarding course", href: "/app/learning", cat: "Path" },
-        { icon: "book" as const, name: "Open Documentation", sub: "Docs hub and doc health", href: "/app/docs", cat: "Action" },
-        { icon: "users" as const, name: "Open Developer Insights", sub: "Team skill map and profiles", href: "/app/devs", cat: "Action" },
-        { icon: "map" as const, name: "Open Project Intelligence Map", sub: "Full architecture graph", href: "/app/map", cat: "Action" },
-        { icon: "settings" as const, name: "Settings", sub: "Workspace and connection", href: "/app/settings", cat: "Action" },
-      ].map((a) => ({
-        id: `action:${a.name}`,
-        icon: a.icon,
-        name: a.name,
-        sub: a.sub,
-        cat: a.cat,
-        onSelect: () => go(a.href),
+        {
+          id: `ask:${query}`,
+          icon: "ask",
+          name: `Ask DevMind: "${query.trim()}"`,
+          sub: `Synthesize answers from ${repoContext.name} code evidence with AI`,
+          cat: "Ask",
+          onSelect: () =>
+            go(`/app/ask?q=${encodeURIComponent(query.trim())}&repoId=${encodeURIComponent(repoId)}`),
+        },
+      ],
+    });
+  }
+
+  return groups;
+}
+
+/**
+ * Builds initial command palette groups when search input is empty.
+ * Returns only verified real repository actions and modules.
+ * Absolutely NO mock data or static fixture items.
+ */
+export function buildDefaultPaletteGroups(
+  repoContext: RepoContext,
+  go: (href: string) => void
+): PaletteGroup[] {
+  const repoId = repoContext.id || repoContext.name;
+  const groups: PaletteGroup[] = [];
+
+  // Actions for the currently selected repository
+  groups.push({
+    label: "Quick Actions",
+    items: [
+      {
+        id: "action:ask",
+        icon: "ask",
+        name: "Ask DevMind",
+        sub: `Ask AI questions about ${repoContext.name} codebase`,
+        cat: "AI",
+        onSelect: () => go(`/app/ask?repoId=${encodeURIComponent(repoId)}`),
+      },
+      {
+        id: "action:map",
+        icon: "map",
+        name: "Project Intelligence Map",
+        sub: `Interactive architecture diagram for ${repoContext.name}`,
+        cat: "Architecture",
+        onSelect: () => go(`/app/map?repoId=${encodeURIComponent(repoId)}`),
+      },
+      {
+        id: "action:files",
+        icon: "file",
+        name: "Browse Indexed Files",
+        sub: `View full repository file tree for ${repoContext.name}`,
+        cat: "Files",
+        onSelect: () => go(`/app/files?repoId=${encodeURIComponent(repoId)}`),
+      },
+      {
+        id: "action:docs",
+        icon: "fileText",
+        name: "Repository Documentation",
+        sub: `Engineering documentation & health for ${repoContext.name}`,
+        cat: "Docs",
+        onSelect: () => go(`/app/docs?repoId=${encodeURIComponent(repoId)}`),
+      },
+    ],
+  });
+
+  // If repository has indexed modules, include them
+  if (repoContext.modules && repoContext.modules.length > 0) {
+    groups.push({
+      label: "Modules",
+      items: repoContext.modules.map((m) => ({
+        id: `module:${m.id}`,
+        icon: "modules",
+        name: m.name,
+        sub: `${m.type || "core"} module${m.filesCount ? ` • ${m.filesCount} files` : ""}`,
+        cat: "Module",
+        keywords: m.name,
+        onSelect: () => go(`/app/modules/${m.id}?repoId=${encodeURIComponent(repoId)}`),
       })),
-    },
-    {
-      label: "Ask DevMind",
-      when: "query",
-      items: QA.map((qa) => ({
-        id: `ask:${qa.q}`,
-        icon: "ask" as const,
-        name: qa.q,
-        sub: "Evidence-backed answer",
-        cat: "Ask",
-        onSelect: () => go(`/app/ask?q=${encodeURIComponent(qa.q)}`),
-      })),
-    },
-  ];
+    });
+  }
+
+  return groups;
 }

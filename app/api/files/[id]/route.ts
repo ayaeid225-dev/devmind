@@ -14,14 +14,40 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Unauthenticated" }, { status: 401 });
     }
 
-    const file = await db.fileRecord.findFirst({
-      where: { id },
+    let file = await db.fileRecord.findFirst({
+      where: {
+        OR: [{ id }, { path: id }],
+      },
       include: {
         module: {
           select: { id: true, name: true, type: true },
         },
+        documentChunks: {
+          orderBy: { chunkIndex: "asc" },
+        },
       },
     });
+
+    if (!file) {
+      const chunk = await db.documentChunk.findUnique({
+        where: { id },
+        include: {
+          file: {
+            include: {
+              module: {
+                select: { id: true, name: true, type: true },
+              },
+              documentChunks: {
+                orderBy: { chunkIndex: "asc" },
+              },
+            },
+          },
+        },
+      });
+      if (chunk) {
+        file = chunk.file;
+      }
+    }
 
     if (!file) {
       return NextResponse.json({ success: false, error: "File not found" }, { status: 404 });

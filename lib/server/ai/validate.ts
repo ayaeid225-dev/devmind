@@ -30,7 +30,7 @@ export function validateCitations(
       const validEnd = Math.max(validStart, citation.endLine || matchedEvidence.endLine);
 
       validCitations.push({
-        id: citation.id || `ev-${validCitations.length + 1}`,
+        id: citation.id || matchedEvidence.id || matchedEvidence.fileId || `ev-${validCitations.length + 1}`,
         path: matchedEvidence.path, // Use exact canonical path
         startLine: validStart,
         endLine: validEnd,

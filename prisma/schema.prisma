@@ -9,18 +9,20 @@ datasource db {
 }
 
 model User {
-  id               String            @id @default(cuid())
-  email            String            @unique
-  name             String
-  passwordHash     String?
-  avatarUrl        String?
-  role             String            @default("Developer")
-  color            String            @default("#C8D62B")
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  memberships      OrgMember[]
-  learningProgress LearningProgress[]
-  githubAccount    GitHubAccount?
+  id                  String             @id @default(cuid())
+  email               String             @unique
+  name                String
+  passwordHash        String?
+  avatarUrl           String?
+  role                String             @default("Developer")
+  color               String             @default("#C8D62B")
+  tokenVersion        Int                @default(0)
+  onboardingCompleted Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  memberships         OrgMember[]
+  learningProgress    LearningProgress[]
+  githubAccount       GitHubAccount?
 }
 
 model GitHubAccount {
@@ -32,6 +34,7 @@ model GitHubAccount {
   avatarUrl    String?
   email        String?
   accessToken  String
+  status       String   @default("ACTIVE")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -88,10 +91,21 @@ model Repository {
   indexedChunksCount   Int                @default(0)
   embeddingStartedAt   DateTime?
   embeddingCompletedAt DateTime?
-  filesCount           Int                @default(248)
-  modulesCount         Int                @default(12)
-  depsCount            Int                @default(36)
-  contributorsCount    Int                @default(18)
+  localPath            String?
+  gitSyncStatus        String             @default("NOT_SYNCED") // NOT_SYNCED, SYNCING, COMPLETED, PARTIAL, FAILED
+  gitSyncError         String?
+  lastGitSyncAt        DateTime?
+  latestCommitSha      String?
+  lastSyncedCommitSha  String?
+  lastSuccessfulSyncAt DateTime?
+  syncStatus           String             @default("NOT_SYNCED") // NOT_SYNCED, SYNCING, COMPLETED, PARTIAL, FAILED
+  syncError            String?
+  lastSyncSummary      String?
+  commitsCount         Int                @default(0)
+  filesCount           Int                @default(0)
+  modulesCount         Int                @default(0)
+  depsCount            Int                @default(0)
+  contributorsCount    Int                @default(0)
   lastIndexedAt        DateTime           @default(now())
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
@@ -104,6 +118,15 @@ model Repository {
   documentRecords      DocumentRecord[]
   activityRecords      ActivityRecord[]
   documentChunks       DocumentChunk[]
+  commits              CommitRecord[]
+  contributors         ContributorRecord[]
+  syncJobs             SyncJob[]
+
+  @@index([projectId])
+  @@index([owner, name])
+  @@index([ingestionStatus])
+  @@index([gitSyncStatus])
+  @@index([syncStatus])
 }
 
 model Branch {
@@ -130,6 +153,8 @@ model Module {
   createdAt        DateTime     @default(now())
   repo             Repository   @relation(fields: [repoId], references: [id], onDelete: Cascade)
   files            FileRecord[]
+
+  @@index([repoId])
 }
 
 model FileRecord {
@@ -139,6 +164,11 @@ model FileRecord {
   path           String
   size           String
   type           String          // code, doc, test
+  language       String          @default("UNKNOWN")
+  parsingStatus  String          @default("UNSUPPORTED") // PARSED, UNSUPPORTED, FAILED
+  parsingError   String?
+  lineCount      Int             @default(0)
+  symbolsJson    String?         // Structured AST symbols JSON payload
   updatedText    String
   createdAt      DateTime        @default(now())
   repo           Repository      @relation(fields: [repoId], references: [id], onDelete: Cascade)
@@ -146,6 +176,10 @@ model FileRecord {
   documentChunks DocumentChunk[]
 
   @@unique([repoId, path])
+  @@index([repoId, language])
+  @@index([repoId, parsingStatus])
+  @@index([repoId, type])
+  @@index([repoId, moduleId])
 }
 
 model DocumentChunk {
@@ -167,20 +201,35 @@ model DocumentChunk {
   file          FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
   @@unique([repoId, path, chunkIndex])
+  @@index([fileId])
 }
 
 model DependencyRecord {
-  id          String     @id @default(cuid())
-  repoId      String
-  kind        String     // internal, external
-  fromModule  String?
-  toModule    String?
-  name        String?
-  version     String?
-  purpose     String?
-  status      String?
-  createdAt   DateTime   @default(now())
-  repo        Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  id               String     @id @default(cuid())
+  key              String?    @unique
+  repoId           String
+  kind             String     // internal, external
+  sourceFile       String?
+  targetFile       String?
+  importSource     String?
+  dependencyType   String     @default("import") // import, manifest, module_edge
+  language         String?
+  resolutionStatus String     @default("RESOLVED_INTERNAL") // RESOLVED_INTERNAL, RESOLVED_EXTERNAL, UNRESOLVED
+  fromModule       String?
+  toModule         String?
+  name             String?
+  version          String?
+  purpose          String?
+  status           String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @default(now()) @updatedAt
+  repo             Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId, sourceFile])
+  @@index([repoId, targetFile])
+  @@index([repoId, kind])
+  @@index([repoId, resolutionStatus])
+  @@index([repoId, dependencyType])
 }
 
 model DeveloperRecord {
@@ -231,3 +280,115 @@ model LearningProgress {
 
   @@unique([userId, lessonId])
 }
+
+model CommitRecord {
+  id                     String                   @id @default(cuid())
+  repoId                 String
+  sha                    String
+  shortSha               String
+  message                String
+  authorName             String
+  authorEmail            String
+  committerName          String?
+  committerEmail         String?
+  authoredAt             DateTime
+  committedAt            DateTime
+  parentShasJson         String                   @default("[]")
+  branch                 String?
+  commitUrl              String?
+  authorContributorId    String?
+  committerContributorId String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @default(now()) @updatedAt
+  repo                   Repository               @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  authorContributor      ContributorRecord?       @relation("AuthorCommits", fields: [authorContributorId], references: [id], onDelete: SetNull)
+  committerContributor   ContributorRecord?       @relation("CommitterCommits", fields: [committerContributorId], references: [id], onDelete: SetNull)
+  fileChanges            CommitFileChangeRecord[]
+
+  @@unique([repoId, sha])
+  @@index([repoId, committedAt])
+  @@index([repoId, authorEmail])
+  @@index([repoId, sha])
+  @@index([repoId, authorContributorId])
+  @@index([repoId, committerContributorId])
+}
+
+model CommitFileChangeRecord {
+  id         String       @id @default(cuid())
+  repoId     String
+  commitId   String
+  commitSha  String
+  oldPath    String?
+  newPath    String
+  changeType String       // ADDED, MODIFIED, DELETED, RENAMED, COPIED, TYPE_CHANGED, UNKNOWN
+  additions  Int          @default(0)
+  deletions  Int          @default(0)
+  similarity Int?
+  isBinary   Boolean      @default(false)
+  fileMode   String?
+  createdAt  DateTime     @default(now())
+  commit     CommitRecord @relation(fields: [commitId], references: [id], onDelete: Cascade)
+
+  @@index([commitId])
+  @@index([repoId, commitSha])
+  @@index([repoId, newPath])
+  @@index([repoId, oldPath])
+  @@index([repoId, changeType])
+}
+
+model ContributorRecord {
+  id                    String         @id @default(cuid())
+  repoId                String
+  identityKey           String
+  name                  String
+  email                 String?
+  authoredCommitsCount  Int            @default(0)
+  committedCommitsCount Int            @default(0)
+  totalCommitsCount     Int            @default(0)
+  additions             Int            @default(0)
+  deletions             Int            @default(0)
+  filesTouchedCount     Int            @default(0)
+  filesTouchedJson      String         @default("[]")
+  firstContributionAt   DateTime
+  lastContributionAt    DateTime
+  isAuthor              Boolean        @default(true)
+  isCommitter           Boolean        @default(false)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @default(now()) @updatedAt
+  repo                  Repository     @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  authoredCommits       CommitRecord[] @relation("AuthorCommits")
+  committedCommits      CommitRecord[] @relation("CommitterCommits")
+
+  @@unique([repoId, identityKey])
+  @@index([repoId, totalCommitsCount])
+  @@index([repoId, lastContributionAt])
+  @@index([repoId, email])
+  @@index([repoId, name])
+}
+
+model SyncJob {
+  id            String     @id @default(cuid())
+  repoId        String
+  deliveryId    String?    @unique
+  event         String     @default("push")
+  status        String     @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  beforeSha     String?
+  afterSha      String
+  ref           String?
+  isIncremental Boolean    @default(true)
+  filesAdded    Int        @default(0)
+  filesModified Int        @default(0)
+  filesDeleted  Int        @default(0)
+  error         String?
+  summary       String?
+  commitsJson   String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  repo          Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([repoId, status])
+  @@index([deliveryId])
+}
+
