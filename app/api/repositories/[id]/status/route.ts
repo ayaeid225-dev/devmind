@@ -31,7 +31,17 @@ export async function GET(
         filesCount: true,
         modulesCount: true,
         depsCount: true,
+        contributorsCount: true,
         lastIndexedAt: true,
+        gitSyncStatus: true,
+        syncStatus: true,
+        latestCommitSha: true,
+        lastSyncedCommitSha: true,
+        lastGitSyncAt: true,
+        lastSuccessfulSyncAt: true,
+        lastSyncSummary: true,
+        gitSyncError: true,
+        syncError: true,
       },
     });
 

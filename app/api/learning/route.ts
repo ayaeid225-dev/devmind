@@ -1,5 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/server/auth";
+import { authorizeKnowledgeRepo } from "@/lib/server/knowledge/api-helper";
+import { getRepositoryKnowledge } from "@/lib/server/knowledge/queries";
+import { generateOnboardingPath } from "@/lib/onboarding-helper";
+
+export async function GET(request: NextRequest) {
+  try {
+    const authResult = await authorizeKnowledgeRepo(request);
+    if (!authResult.success) {
+      return authResult.response;
+    }
+
+    const { repoId } = authResult.context;
+    const graphData = await getRepositoryKnowledge(repoId, {
+      includeSymbols: true,
+      includeDependencies: true,
+    });
+
+    const onboardingPath = generateOnboardingPath(graphData, {
+      repoIdOverride: repoId,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: onboardingPath,
+    });
+  } catch (error) {
+    console.error("API GET /api/learning error:", error);
+    return NextResponse.json(
+      { success: false, error: "Failed to generate onboarding path" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/server/auth";
-import { searchEvidence, type EvidenceResultItem } from "@/lib/server/rag/search";
-import { getLLMProvider } from "@/lib/server/ai/provider";
+import { askAssistant } from "@/lib/server/ai/assistant";
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,35 +37,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Search RAG Evidence scoped strictly by repoId
-    let evidence: EvidenceResultItem[] = [];
-    try {
-      evidence = await searchEvidence({
-        repoId,
-        query: question.trim(),
-        limit: 5,
-      });
-    } catch {
-      // Fallback to empty evidence if search encounters error
-    }
-
-    // 2. Synthesize AI Answer using LLM Provider
-    const provider = getLLMProvider();
-    const aiResult = await provider.generateAnswer({
-      question: question.trim(),
-      evidence,
+    const aiResult = await askAssistant({
+      repoId,
+      question,
+      userId: user.id,
     });
 
     return NextResponse.json({
       success: true,
       data: aiResult,
     });
-  } catch (error) {
+  } catch (error: any) {
+    const statusCode = error?.statusCode || 500;
     const errorMsg = error instanceof Error ? error.message : "Failed to process question";
     console.error("API POST /api/ask error:", error);
     return NextResponse.json(
       { success: false, error: errorMsg },
-      { status: 500 }
+      { status: statusCode }
     );
   }
 }

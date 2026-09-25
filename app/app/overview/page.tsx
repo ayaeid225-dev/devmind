@@ -36,6 +36,13 @@ interface RepoInfo {
   modulesCount: number;
   depsCount: number;
   contributorsCount?: number;
+  gitSyncStatus?: string;
+  syncStatus?: string;
+  latestCommitSha?: string;
+  lastSyncedCommitSha?: string;
+  lastGitSyncAt?: string;
+  lastSuccessfulSyncAt?: string;
+  lastSyncSummary?: string;
 }
 
 function OverviewPageContent() {
@@ -126,11 +133,40 @@ function OverviewPageContent() {
   return (
     <div className="fade-up">
       {/* Page Header */}
-      <div className="page-head">
-        <h1 className="page-title">{titleName}</h1>
-        <p className="page-sub mono">
-          {repoInfo?.defaultBranch || "main"} • Analysis complete • Connected repository: <b className="mono">{currentRepoId}</b>
-        </p>
+      <div className="page-head row between align-center" style={{ flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 className="page-title">{titleName}</h1>
+          <p className="page-sub mono">
+            {repoInfo?.defaultBranch || "main"} • Connected repository: <b className="mono">{currentRepoId}</b>
+          </p>
+        </div>
+        <div className="row gap8 align-center">
+          {repoInfo?.gitSyncStatus === "SYNCING" ? (
+            <Badge variant="amber">
+              <span className="dot" />
+              Syncing changes…
+            </Badge>
+          ) : repoInfo?.gitSyncStatus === "FAILED" ? (
+            <Badge variant="error">
+              <Icon name="alert" className="ic-sm" />
+              Sync failed
+            </Badge>
+          ) : (
+            <Badge variant="lime">
+              <Icon name="checkCircle" className="ic-sm" />
+              {repoInfo?.lastSyncSummary || "Synchronized"}
+            </Badge>
+          )}
+          {repoInfo?.latestCommitSha && (
+            <span
+              className="mono t3 tiny"
+              title={`Latest Synced Commit: ${repoInfo.latestCommitSha}`}
+              style={{ padding: "4px 8px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 4 }}
+            >
+              SHA: {repoInfo.latestCommitSha.slice(0, 7)}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Metric Grid */}

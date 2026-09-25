@@ -1,4 +1,23 @@
-import "server-only";
+import { detectLanguage, LanguageInfo } from "./detector";
+import { ParsedFileResult } from "./common-model";
+import { ParserRegistry } from "./parsers/types";
+import { UnsupportedLanguageParser } from "./parsers/unsupported";
+import { TypeScriptParser } from "./parsers/typescript";
+import { PythonParser } from "./parsers/python";
+import { DartParser } from "./parsers/dart";
+import { JavaParser } from "./parsers/java";
+import { GoParser } from "./parsers/go";
+
+// Instantiate Global Parser Registry with Unsupported Fallback Parser
+const unsupportedParser = new UnsupportedLanguageParser();
+export const globalParserRegistry = new ParserRegistry(unsupportedParser);
+
+// Register active Milestone 1 Parsers (Tier 1 + Tier 2 AST Parsers)
+globalParserRegistry.register(new TypeScriptParser());
+globalParserRegistry.register(new PythonParser());
+globalParserRegistry.register(new DartParser());
+globalParserRegistry.register(new JavaParser());
+globalParserRegistry.register(new GoParser());
 
 export interface StaticAnalysisResult {
   lineCount: number;
@@ -6,100 +25,51 @@ export interface StaticAnalysisResult {
   exports: string[];
   functionsCount: number;
   language: string;
+  languageInfo: LanguageInfo;
+  parsedFileResult: ParsedFileResult;
+  parsingError?: string;
 }
 
 export function analyzeSourceCode(path: string, content: string): StaticAnalysisResult {
-  const lines = content.split("\n");
-  const lineCount = lines.length;
-  const ext = path.split(".").pop()?.toLowerCase() || "";
+  const languageInfo = detectLanguage(path);
+  const parser = globalParserRegistry.getParser(languageInfo);
 
-  const imports: string[] = [];
-  const exports: string[] = [];
-  let functionsCount = 0;
-  let language = "Text";
+  let parsedFileResult: ParsedFileResult;
+  let parsingError: string | undefined;
 
-  if (["ts", "tsx", "js", "jsx"].includes(ext)) {
-    language = ext.startsWith("ts") ? "TypeScript" : "JavaScript";
-
-    // Static ES import regex: import ... from "module" or import "module"
-    const importRegex = /import\s+.*?from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]|require\(['"]([^'"]+)['"]\)/g;
-    let match;
-    while ((match = importRegex.exec(content)) !== null) {
-      const imp = match[1] || match[2] || match[3];
-      if (imp && !imports.includes(imp)) {
-        imports.push(imp);
-      }
-    }
-
-    // Static export regex: export const/function/class/default
-    const exportRegex = /export\s+(?:default\s+)?(?:const|function|class|type|interface|enum|let|var)\s+([a-zA-Z0-9_$]+)/g;
-    while ((match = exportRegex.exec(content)) !== null) {
-      if (match[1] && !exports.includes(match[1])) {
-        exports.push(match[1]);
-      }
-    }
-
-    // Function count
-    const funcRegex = /function\s+[a-zA-Z0-9_$]+|\([^)]*\)\s*=>|async\s+function/g;
-    functionsCount = (content.match(funcRegex) || []).length;
-  } else if (ext === "py") {
-    language = "Python";
-    const pyImportRegex = /(?:from\s+([a-zA-Z0-9_.]+)\s+import|import\s+([a-zA-Z0-9_.]+))/g;
-    let match;
-    while ((match = pyImportRegex.exec(content)) !== null) {
-      const imp = match[1] || match[2];
-      if (imp && !imports.includes(imp)) {
-        imports.push(imp);
-      }
-    }
-    functionsCount = (content.match(/def\s+[a-zA-Z0-9_]+/g) || []).length;
-  } else if (ext === "dart") {
-    language = "Dart";
-    const dartImportRegex = /import\s+['"]([^'"]+)['"]/g;
-    let match;
-    while ((match = dartImportRegex.exec(content)) !== null) {
-      if (match[1] && !imports.includes(match[1])) {
-        imports.push(match[1]);
-      }
-    }
-  } else if (ext === "go") {
-    language = "Go";
-    const goImportRegex = /import\s+\(\s*([\s\S]*?)\s*\)|import\s+["']([^"']+)["']/g;
-    let match;
-    while ((match = goImportRegex.exec(content)) !== null) {
-      const imp = match[2];
-      if (imp && !imports.includes(imp)) {
-        imports.push(imp);
-      }
-    }
-  } else if (ext === "rs") {
-    language = "Rust";
-    const rustUseRegex = /use\s+([a-zA-Z0-9_:]+)/g;
-    let match;
-    while ((match = rustUseRegex.exec(content)) !== null) {
-      if (match[1] && !imports.includes(match[1])) {
-        imports.push(match[1]);
-      }
-    }
-  } else if (ext === "json") {
-    language = "JSON";
-  } else if (ext === "yaml" || ext === "yml") {
-    language = "YAML";
-  } else if (ext === "md") {
-    language = "Markdown";
-  } else if (ext === "css") {
-    language = "CSS";
-  } else if (ext === "html") {
-    language = "HTML";
-  } else if (ext === "sql") {
-    language = "SQL";
+  try {
+    parsedFileResult = parser.parse({
+      path,
+      content,
+      language: languageInfo,
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "File parsing failed unexpectedly";
+    console.error(`Parsing error in file ${path}:`, err);
+    parsingError = errorMsg;
+    parsedFileResult = {
+      path,
+      language: languageInfo,
+      parsingStatus: "FAILED",
+      lineCount: content ? content.split("\n").length : 0,
+      imports: [],
+      exports: [],
+      functions: [],
+      classes: [],
+      types: [],
+      enums: [],
+      functionsCount: 0,
+    };
   }
 
   return {
-    lineCount,
-    imports,
-    exports,
-    functionsCount,
-    language,
+    lineCount: parsedFileResult.lineCount,
+    imports: parsedFileResult.imports.map((i) => i.source),
+    exports: parsedFileResult.exports.map((e) => e.symbol),
+    functionsCount: parsedFileResult.functionsCount,
+    language: languageInfo.name,
+    languageInfo,
+    parsedFileResult,
+    parsingError,
   };
 }

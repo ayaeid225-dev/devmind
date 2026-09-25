@@ -39,14 +39,32 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { kind = "external", name, version, purpose, status = "active", fromModule, toModule, repoId } = body;
+    const {
+      kind = "external",
+      name,
+      version,
+      purpose,
+      status = "active",
+      fromModule,
+      toModule,
+      repoId,
+      sourceFile,
+      targetFile,
+      importSource,
+      dependencyType = "import",
+      language,
+      resolutionStatus = "RESOLVED_INTERNAL",
+    } = body;
 
     if (!repoId) {
       return NextResponse.json({ success: false, error: "Repository ID is required" }, { status: 400 });
     }
 
+    const key = body.key || `${repoId}::${sourceFile || "global"}::${importSource || name || Date.now()}::${dependencyType}`;
+
     const newDep = await db.dependencyRecord.create({
       data: {
+        key,
         repoId,
         kind,
         name: name || undefined,
@@ -55,6 +73,12 @@ export async function POST(request: NextRequest) {
         status: status || undefined,
         fromModule: fromModule || undefined,
         toModule: toModule || undefined,
+        sourceFile: sourceFile || undefined,
+        targetFile: targetFile || undefined,
+        importSource: importSource || undefined,
+        dependencyType,
+        language: language || undefined,
+        resolutionStatus,
       },
     });
 

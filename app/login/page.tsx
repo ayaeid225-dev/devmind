@@ -4,6 +4,7 @@ import React, { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon, Logo, useToast } from "@/components/ui";
+import { GitHubAccountSwitchHelp } from "@/components/auth/GitHubAccountSwitchHelp";
 
 function LoginForm() {
   const router = useRouter();
@@ -12,10 +13,13 @@ function LoginForm() {
   const rawNext = searchParams.get("next") || "/app/overview";
   const nextRoute = rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.startsWith("/\\") ? rawNext : "/app/overview";
 
-  const [email, setEmail] = useState("anjali@medialab.dev");
-  const [password, setPassword] = useState("password123");
+  const urlError = searchParams.get("error") || searchParams.get("reason");
+  const isLoggedOut = searchParams.get("logged_out") === "true";
+  const [showLoggedOutNotice, setShowLoggedOutNotice] = useState(isLoggedOut);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(urlError || "");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,15 +49,58 @@ function LoginForm() {
     }
   };
 
+  const githubAuthHref = `/api/github/connect?intent=signin&redirect=true${
+    nextRoute !== "/app/overview" ? `&returnTo=${encodeURIComponent(nextRoute)}` : ""
+  }`;
+
   return (
     <div className="auth-card">
       <h1 className="ac-title">Welcome back</h1>
       <p className="ac-sub">Sign in to access your project intelligence.</p>
 
-      <div className="mt24">
-        <Link href="/connect" className="btn btn-github btn-lg btn-block">
+      {showLoggedOutNotice && (
+        <div
+          style={{
+            marginTop: "16px",
+            padding: "10px 14px",
+            borderRadius: "6px",
+            background: "rgba(139, 195, 74, 0.12)",
+            border: "1px solid rgba(139, 195, 74, 0.3)",
+            color: "#C8D62B",
+            fontSize: "13px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <Icon name="check" className="ic-sm" />
+            <span>You&apos;ve been signed out of DevMind.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowLoggedOutNotice(false)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "inherit",
+              cursor: "pointer",
+              fontSize: "14px",
+              padding: "0 4px",
+              opacity: 0.8,
+            }}
+            aria-label="Dismiss notice"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div className="mt24 col gap8">
+        <a href={githubAuthHref} className="btn btn-github btn-lg btn-block">
           <Icon name="github" /> Continue with GitHub
-        </Link>
+        </a>
+        <GitHubAccountSwitchHelp githubAuthHref={githubAuthHref} />
       </div>
 
       <div className="divider-row">
@@ -108,13 +155,9 @@ function LoginForm() {
         </div>
 
         <div className="row between">
-          <button
-            type="button"
-            className="btn btn-link btn-sm"
-            onClick={() => toast("Password reset link sent to work email", "info")}
-          >
+          <Link href="/forgot-password" className="btn btn-link btn-sm">
             Forgot password?
-          </button>
+          </Link>
         </div>
 
         <button className="btn btn-primary btn-lg btn-block" type="submit" disabled={loading}>

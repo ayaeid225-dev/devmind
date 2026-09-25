@@ -1,22 +1,94 @@
 import "server-only";
 import { db } from "../db";
 import { getCurrentUser } from "../auth";
-import { fetchRepoBranches, fetchRepoTree, fetchRawFileContent } from "../github";
+import {
+  fetchRepoBranches,
+  fetchRepoTree,
+  fetchRawFileContent,
+  fetchRepoCommits,
+  fetchRepoContributors,
+} from "../github";
 import { filterTreeItems } from "./tree";
 import { analyzeSourceCode } from "./parser";
 import { inferModulesFromPaths } from "./modules";
-import { parsePackageJsonDependencies, resolveInternalModuleEdges } from "./dependencies";
+import {
+  isDependencyManifest,
+  parseManifestDependencies,
+  resolveInternalModuleEdges,
+  type ParsedDependency,
+} from "./dependencies";
+import {
+  buildRepoFileIndex,
+  resolveFileDependency,
+  syncFileDependencies,
+  syncManifestDependencies,
+  syncModuleEdges,
+  handleDeletedFiles,
+  type ResolvedFileDependency,
+} from "./resolver";
+import { ingestGitHistory } from "../git";
+import { ingestContributors } from "../contributors";
+import { syncRepositoryStats } from "../repositories/stats";
 
 export interface IngestionParams {
   owner: string;
   repo: string;
   branch?: string;
+  localPath?: string;
+  user?: any;
+  token?: string;
+  targetCommitSha?: string;
 }
 
-export async function ingestRepository({ owner, repo, branch }: IngestionParams) {
-  const user = await getCurrentUser();
+export async function ingestRepository({
+  owner,
+  repo,
+  branch,
+  localPath,
+  user: explicitUser,
+  token,
+  targetCommitSha,
+}: IngestionParams) {
+  let user = explicitUser;
   if (!user) {
-    throw new Error("Unauthenticated: User must be signed in to ingest repositories");
+    user = await getCurrentUser();
+  }
+
+  if (!user) {
+    const existingRepo = await db.repository.findFirst({
+      where: { OR: [{ id: repo }, { name: repo, owner }] },
+      include: {
+        project: {
+          include: {
+            org: {
+              include: {
+                members: {
+                  include: {
+                    user: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (existingRepo?.project?.org?.members?.[0]?.user) {
+      user = {
+        id: existingRepo.project.org.members[0].user.id,
+        name: existingRepo.project.org.members[0].user.name,
+        email: existingRepo.project.org.members[0].user.email,
+        organization: existingRepo.project.org,
+      };
+    } else {
+      user = {
+        id: "system-sync",
+        name: "DevMind Sync Worker",
+        email: "worker@devmind.ai",
+        organization: null,
+      };
+    }
   }
 
   const repoId = repo;
@@ -55,6 +127,7 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
       owner,
       name: repo,
       defaultBranch: branch || "main",
+      ...(localPath ? { localPath } : {}),
     },
     create: {
       id: repoId,
@@ -64,6 +137,7 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
       defaultBranch: branch || "main",
       ingestionStatus: "INDEXING",
       startedAt,
+      ...(localPath ? { localPath } : {}),
     },
   });
 
@@ -95,6 +169,7 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
 
     // 5. Detect Modules from paths
     const validPaths = validBlobs.map((b) => b.path);
+    const validPathsSet = new Set(validPaths);
     const inferredModules = inferModulesFromPaths(validPaths);
     const pathToModuleMap = new Map<string, string>();
 
@@ -122,72 +197,216 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
       }
     }
 
-    // 6. Process Source Files
+    // Handle deleted files from previous ingestion
+    await handleDeletedFiles(db, repository.id, validPathsSet);
+
+    // Pre-fetch configuration files for path alias & package resolution
+    let tsconfigContent: string | null = null;
+    let pubspecContent: string | null = null;
+    let goModContent: string | null = null;
+
+    if (validPathsSet.has("tsconfig.json")) {
+      try {
+        tsconfigContent = await fetchRawFileContent(owner, repo, "tsconfig.json", activeBranch);
+      } catch {}
+    } else if (validPathsSet.has("jsconfig.json")) {
+      try {
+        tsconfigContent = await fetchRawFileContent(owner, repo, "jsconfig.json", activeBranch);
+      } catch {}
+    }
+
+    if (validPathsSet.has("pubspec.yaml")) {
+      try {
+        pubspecContent = await fetchRawFileContent(owner, repo, "pubspec.yaml", activeBranch);
+      } catch {}
+    }
+
+    if (validPathsSet.has("go.mod")) {
+      try {
+        goModContent = await fetchRawFileContent(owner, repo, "go.mod", activeBranch);
+      } catch {}
+    }
+
+    const repoFileIndex = buildRepoFileIndex(validPaths, {
+      tsconfigContent,
+      pubspecContent,
+      goModContent,
+    });
+
+    // 6. Process Source Files & Multi-Language Manifests
     const fileImportsList: Array<{ module: string; imports: string[] }> = [];
-    let packageJsonContent: string | null = null;
     let totalLines = 0;
 
     for (const blob of validBlobs) {
-      const content = await fetchRawFileContent(owner, repo, blob.path, activeBranch);
-      const analysis = analyzeSourceCode(blob.path, content);
       const moduleId = pathToModuleMap.get(blob.path) ?? null;
-      totalLines += analysis.lineCount;
-
-      if (blob.path === "package.json") {
-        packageJsonContent = content;
-      }
-
-      if (moduleId && analysis.imports.length > 0) {
-        fileImportsList.push({ module: moduleId, imports: analysis.imports });
-      }
-
       const sizeFormatted = `${(blob.size ?? 0 / 1024).toFixed(1)} KB`;
 
-      await db.fileRecord.upsert({
-        where: {
-          repoId_path: {
-            repoId: repository.id,
-            path: blob.path,
+      try {
+        const content = await fetchRawFileContent(owner, repo, blob.path, activeBranch);
+        const analysis = analyzeSourceCode(blob.path, content);
+        totalLines += analysis.lineCount;
+
+        // Resolve File-Level Dependencies
+        const fileResolvedDeps: ResolvedFileDependency[] = [];
+        if (analysis.parsedFileResult.imports.length > 0) {
+          for (const imp of analysis.parsedFileResult.imports) {
+            const resolved = resolveFileDependency(
+              blob.path,
+              imp,
+              analysis.languageInfo.id,
+              repoFileIndex,
+              repository.id
+            );
+            fileResolvedDeps.push(resolved);
+          }
+        }
+        await syncFileDependencies(db, repository.id, blob.path, fileResolvedDeps);
+
+        // Multi-language manifest parsing (package.json, requirements.txt, pyproject.toml, pubspec.yaml, go.mod, pom.xml, build.gradle, Cargo.toml)
+        if (isDependencyManifest(blob.path)) {
+          const manifestDeps = parseManifestDependencies(blob.path, content);
+          await syncManifestDependencies(db, repository.id, blob.path, manifestDeps);
+        }
+
+        if (moduleId && analysis.imports.length > 0) {
+          fileImportsList.push({ module: moduleId, imports: analysis.imports });
+        }
+
+        const symbolsJson = JSON.stringify(analysis.parsedFileResult);
+
+        await db.fileRecord.upsert({
+          where: {
+            repoId_path: {
+              repoId: repository.id,
+              path: blob.path,
+            },
           },
-        },
-        update: {
-          moduleId,
-          size: sizeFormatted,
-          updatedText: "Just now",
-        },
-        create: {
-          repoId: repository.id,
-          moduleId,
-          path: blob.path,
-          size: sizeFormatted,
-          type: "code",
-          updatedText: "Just now",
-        },
-      });
+          update: {
+            moduleId,
+            size: sizeFormatted,
+            language: analysis.languageInfo.name,
+            parsingStatus: analysis.parsedFileResult.parsingStatus,
+            parsingError: analysis.parsingError || null,
+            lineCount: analysis.lineCount,
+            symbolsJson,
+            updatedText: "Just now",
+          },
+          create: {
+            repoId: repository.id,
+            moduleId,
+            path: blob.path,
+            size: sizeFormatted,
+            type: analysis.languageInfo.category,
+            language: analysis.languageInfo.name,
+            parsingStatus: analysis.parsedFileResult.parsingStatus,
+            parsingError: analysis.parsingError || null,
+            lineCount: analysis.lineCount,
+            symbolsJson,
+            updatedText: "Just now",
+          },
+        });
+      } catch (fileError) {
+        const errorMsg = fileError instanceof Error ? fileError.message : "Failed to ingest file";
+        console.error(`Failed to ingest file ${blob.path}:`, fileError);
+
+        await db.fileRecord.upsert({
+          where: {
+            repoId_path: {
+              repoId: repository.id,
+              path: blob.path,
+            },
+          },
+          update: {
+            moduleId,
+            size: sizeFormatted,
+            language: "Unknown",
+            parsingStatus: "FAILED",
+            parsingError: errorMsg,
+            updatedText: "Failed",
+          },
+          create: {
+            repoId: repository.id,
+            moduleId,
+            path: blob.path,
+            size: sizeFormatted,
+            type: "other",
+            language: "Unknown",
+            parsingStatus: "FAILED",
+            parsingError: errorMsg,
+            updatedText: "Failed",
+          },
+        });
+      }
     }
 
-    // 7. Process Dependencies
-    const dependenciesList = [
-      ...(packageJsonContent ? parsePackageJsonDependencies(packageJsonContent) : []),
-      ...resolveInternalModuleEdges(fileImportsList, pathToModuleMap),
-    ];
+    // 7. Process Internal Module Edges & Count Total Dependencies
+    const moduleEdges = resolveInternalModuleEdges(fileImportsList, pathToModuleMap);
+    await syncModuleEdges(db, repository.id, moduleEdges);
 
-    for (const dep of dependenciesList) {
-      await db.dependencyRecord.create({
-        data: {
-          repoId: repository.id,
-          kind: dep.kind,
-          fromModule: dep.fromModule,
-          toModule: dep.toModule,
-          name: dep.name,
-          version: dep.version,
-          purpose: dep.purpose,
-          status: dep.status,
-        },
-      });
+    const totalDepsCount = await db.dependencyRecord.count({
+      where: { repoId: repository.id },
+    });
+
+    // 8. Ingest Contributors and Git History
+    let contributorsCount = 0;
+    try {
+      const contributors = await fetchRepoContributors(owner, repo);
+      if (contributors.length > 0) {
+        contributorsCount = contributors.length;
+        const colorPalette = ["#C8D62B", "#4A90E2", "#9B51E0", "#E67E22", "#2ECC71", "#E74C3C", "#1ABC9C"];
+        const totalContributions = contributors.reduce((acc, c) => acc + (c.contributions || 1), 0);
+
+        for (let i = 0; i < contributors.length; i++) {
+          const contrib = contributors[i];
+          const color = colorPalette[i % colorPalette.length];
+          const coveragePercent = Math.min(
+            100,
+            Math.max(10, Math.round(((contrib.contributions || 1) / totalContributions) * 100))
+          );
+
+          await db.developerRecord.upsert({
+            where: { id: `dev-${contrib.id}` },
+            update: {
+              name: contrib.login,
+              coverage: coveragePercent,
+              blurb: `${contrib.contributions} contributions to ${repo}`,
+            },
+            create: {
+              id: `dev-${contrib.id}`,
+              repoId: repository.id,
+              name: contrib.login,
+              role: i === 0 ? "Lead Contributor" : "Contributor",
+              color,
+              coverage: coveragePercent,
+              blurb: `${contrib.contributions} contributions to ${repo}`,
+              recentContribution: `Committed code to ${activeBranch}`,
+            },
+          });
+        }
+      }
+    } catch (contribError) {
+      console.warn(`Non-fatal warning: Failed to fetch contributors for ${owner}/${repo}:`, contribError);
     }
 
-    // 8. Record Activity Event
+    try {
+      const commits = await fetchRepoCommits(owner, repo, activeBranch, 15);
+      for (const commit of commits) {
+        await db.activityRecord.create({
+          data: {
+            repoId: repository.id,
+            text: commit.message,
+            byUser: commit.authorName,
+            category: "git",
+            icon: "git",
+            timestampText: formatRelativeDate(commit.authorDate),
+          },
+        });
+      }
+    } catch (commitsError) {
+      console.warn(`Non-fatal warning: Failed to fetch commits for ${owner}/${repo}:`, commitsError);
+    }
+
+    // Record Indexing Summary Activity Event
     await db.activityRecord.create({
       data: {
         repoId: repository.id,
@@ -199,26 +418,60 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
       },
     });
 
-    // 9. Update Repository status to COMPLETED
+    // 9. Ingest Real Git History (if localPath is available)
+    const effectiveLocalPath = localPath || repository.localPath;
+    let gitSyncResult = null;
+    if (effectiveLocalPath) {
+      try {
+        gitSyncResult = await ingestGitHistory(repository.id, effectiveLocalPath, {
+          branch: activeBranch,
+        });
+      } catch (gitErr) {
+        console.warn(`Non-fatal warning: Git history ingestion failed for ${repository.id}:`, gitErr);
+      }
+    }
+
+    // 10. Ingest Contributors from Git History
+    let contributorSyncResult = null;
+    try {
+      contributorSyncResult = await ingestContributors(repository.id);
+    } catch (contribErr) {
+      console.warn(`Non-fatal warning: Contributor ingestion failed for ${repository.id}:`, contribErr);
+    }
+
+    // 11. Update Repository status to COMPLETED
     const completedAt = new Date();
+    const repoStats = await syncRepositoryStats(repository.id);
+    const finalCommitSha = targetCommitSha || gitSyncResult?.latestCommitSha || repoStats.latestCommitSha;
+
     await db.repository.update({
       where: { id: repository.id },
       data: {
         ingestionStatus: "COMPLETED",
-        filesCount: validBlobs.length,
-        modulesCount: inferredModules.length,
-        depsCount: dependenciesList.length,
+        gitSyncStatus: "COMPLETED",
+        syncStatus: "COMPLETED",
+        gitSyncError: null,
+        syncError: null,
         lastIndexedAt: completedAt,
         completedAt,
+        lastGitSyncAt: completedAt,
+        lastSuccessfulSyncAt: completedAt,
+        latestCommitSha: finalCommitSha,
+        lastSyncedCommitSha: finalCommitSha,
+        lastSyncSummary: `Full sync completed (${repoStats.filesCount} files, ${repoStats.modulesCount} modules)`,
       },
     });
 
     return {
       success: true,
       repoId: repository.id,
-      filesCount: validBlobs.length,
-      modulesCount: inferredModules.length,
+      filesCount: repoStats.filesCount,
+      modulesCount: repoStats.modulesCount,
+      depsCount: repoStats.depsCount,
       ignoredFilesCount: ignoredCount,
+      gitSyncStatus: "COMPLETED",
+      commitsCount: repoStats.commitsCount,
+      contributorsCount: repoStats.contributorsCount,
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Ingestion failed";
@@ -234,5 +487,21 @@ export async function ingestRepository({ owner, repo, branch }: IngestionParams)
     });
 
     throw error;
+  }
+}
+
+function formatRelativeDate(isoDate: string): string {
+  try {
+    const diffMs = Date.now() - new Date(isoDate).getTime();
+    if (isNaN(diffMs)) return "Recently";
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffHours < 1) return "Just now";
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return "1 day ago";
+    if (diffDays < 30) return `${diffDays} days ago`;
+    return new Date(isoDate).toLocaleDateString();
+  } catch {
+    return "Recently";
   }
 }

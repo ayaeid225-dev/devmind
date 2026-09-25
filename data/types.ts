@@ -1,19 +1,33 @@
 import type { IconName } from "@/components/ui";
 
 export interface Repo {
+  id?: string;
   name: string;
   owner: string;
   branch?: string;
+  defaultBranch?: string;
   branches?: string[];
   lang?: string;
   updated?: string;
   contributors?: number;
+  contributorsCount?: number;
   files?: number;
+  filesCount?: number;
   modules?: number;
+  modulesCount?: number;
   deps?: number;
+  depsCount?: number;
   private?: boolean;
   desc?: string;
   tooLarge?: boolean;
+  gitSyncStatus?: string;
+  syncStatus?: string;
+  latestCommitSha?: string | null;
+  lastSyncedCommitSha?: string | null;
+  lastGitSyncAt?: string | null;
+  lastSuccessfulSyncAt?: string | null;
+  lastSyncSummary?: string | null;
+  lastIndexedAt?: string;
 }
 
 export type ModuleType = "core" | "api" | "db" | "ext";

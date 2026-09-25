@@ -3,7 +3,7 @@
 import React, { use, useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Icon, Badge, Button, useToast } from "@/components/ui";
+import { Icon, Badge, Button, CodeViewer, useToast } from "@/components/ui";
 import { useShell } from "@/lib/shell-context";
 
 interface DbFileRecord {
@@ -15,6 +15,13 @@ interface DbFileRecord {
   type: string;
   updatedText: string;
   module?: { id: string; name: string; type: string } | null;
+  documentChunks?: Array<{
+    id: string;
+    content: string;
+    startLine: number;
+    endLine: number;
+    chunkIndex: number;
+  }>;
 }
 
 const DART_KEYWORDS = new Set([
@@ -101,6 +108,29 @@ function EvidenceDetailContent({
     load();
     return () => { ignore = true; };
   }, [id]);
+
+  const targetLine = searchParams.get("line") ? parseInt(searchParams.get("line")!, 10) : undefined;
+
+  const codeLines = React.useMemo(() => {
+    if (!file?.documentChunks || file.documentChunks.length === 0) {
+      if (file?.updatedText && file.updatedText.includes("\n")) {
+        return file.updatedText.split("\n");
+      }
+      return [];
+    }
+    const lines: string[] = [];
+    for (const chunk of file.documentChunks) {
+      const chunkLines = chunk.content.split("\n");
+      for (let i = 0; i < chunkLines.length; i++) {
+        const lineIdx = chunk.startLine + i - 1;
+        lines[lineIdx] = chunkLines[i];
+      }
+    }
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] === undefined) lines[i] = "";
+    }
+    return lines;
+  }, [file]);
 
   if (loading) {
     return (
@@ -230,6 +260,27 @@ function EvidenceDetailContent({
           )}
         </div>
       </div>
+
+      {/* Source Code Viewer Section */}
+      {codeLines.length > 0 && (
+        <div className="card mt16">
+          <div className="card-header row between align-center">
+            <div className="sec-title">File Source Content</div>
+            {targetLine && (
+              <Badge variant="lime" small>
+                Line {targetLine} highlighted
+              </Badge>
+            )}
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            <CodeViewer
+              path={file.path}
+              lines={codeLines}
+              highlight={targetLine ? [targetLine] : undefined}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="card mt16">

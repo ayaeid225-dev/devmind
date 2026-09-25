@@ -24,3 +24,105 @@ html {
 body {
   min-height: 100%;
 }
+
+/* ============================================================================
+   PROFESSIONAL PRINT & PDF EXPORT STYLES (Milestone 6)
+   ============================================================================ */
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 14mm 12mm 14mm 12mm;
+  }
+
+  /* Hide app chrome, sidebar, topbar, interactive controls */
+  .sidebar,
+  .sb-nav,
+  .topbar,
+  .no-print,
+  .btn-no-print,
+  header,
+  nav,
+  aside,
+  #sb-brand {
+    display: none !important;
+  }
+
+  /* Reset main shell */
+  html, body, main, .app-shell, .content {
+    background: #ffffff !important;
+    color: #111827 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    font-size: 10pt !important;
+    line-height: 1.4 !important;
+  }
+
+  /* Print Header & Footer */
+  .print-only {
+    display: block !important;
+  }
+
+  /* Section breaks & avoid breaking cards/tables */
+  .print-page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .print-avoid-break,
+  .card,
+  .doc-section,
+  .doc-diagram,
+  table,
+  tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  h1, h2, h3, h4 {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+    color: #0f172a !important;
+  }
+
+  /* Printable tables */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  th, td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6px 10px !important;
+    color: #1e293b !important;
+    background: transparent !important;
+  }
+
+  th {
+    background: #f1f5f9 !important;
+    font-weight: 600 !important;
+  }
+
+  /* Links in print */
+  a {
+    color: #0f172a !important;
+    text-decoration: none !important;
+  }
+
+  /* SVG diagrams */
+  svg {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+}

@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "./Icon";
+import { Spinner } from "./Spinner";
 
 export interface PaletteItem {
   id: string;
@@ -29,6 +30,14 @@ export interface CommandPaletteProps {
   onClose: () => void;
   onOpen?: () => void;
   hotkey?: boolean;
+  loading?: boolean;
+  placeholder?: string;
+  onQueryChange?: (query: string) => void;
+  emptyState?: {
+    title: string;
+    sub: string;
+  };
+  remoteMode?: boolean;
 }
 
 interface Row {
@@ -40,10 +49,8 @@ interface Row {
 /*
  * Ported from ui.js command palette (#palette-root): backdrop + .palette
  * with input row, grouped results (.pal-item) and footer hints.
- * Filtering is a case-insensitive substring match on name/sub/keywords (empty
- * query matches everything); group `max` caps apply at rest state too and
- * `when: "query"` hides a group until something is typed. ArrowUp/Down
- * navigate, Enter selects, Escape closes, Ctrl/Cmd+K toggles when `hotkey`
+ * In remoteMode, results are produced by backend semantic search.
+ * ArrowUp/Down navigate, Enter selects, Escape closes, Ctrl/Cmd+K toggles when `hotkey`
  * is enabled.
  */
 export function CommandPalette({
@@ -52,6 +59,11 @@ export function CommandPalette({
   onClose,
   onOpen,
   hotkey = true,
+  loading = false,
+  placeholder,
+  onQueryChange,
+  emptyState,
+  remoteMode = false,
 }: CommandPaletteProps) {
   useEffect(() => {
     if (!hotkey) return;
@@ -68,13 +80,31 @@ export function CommandPalette({
 
   // Fresh mount per open resets query/selection (mirrors U.openPalette).
   if (!open) return null;
-  return <PaletteContent groups={groups} onClose={onClose} />;
+  return (
+    <PaletteContent
+      groups={groups}
+      onClose={onClose}
+      loading={loading}
+      placeholder={placeholder}
+      onQueryChange={onQueryChange}
+      emptyState={emptyState}
+      remoteMode={remoteMode}
+    />
+  );
 }
 
 function PaletteContent({
   groups,
   onClose,
-}: Pick<CommandPaletteProps, "groups" | "onClose">) {
+  loading = false,
+  placeholder,
+  onQueryChange,
+  emptyState,
+  remoteMode = false,
+}: Pick<
+  CommandPaletteProps,
+  "groups" | "onClose" | "loading" | "placeholder" | "onQueryChange" | "emptyState" | "remoteMode"
+>) {
   const [query, setQuery] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -87,6 +117,14 @@ function PaletteContent({
 
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
+    if (remoteMode) {
+      // In remoteMode, backend semantic search does the retrieval & scoring
+      return groups
+        .filter((g) => g.when !== "query" || q.length > 0)
+        .map((g) => (g.max != null ? { ...g, items: g.items.slice(0, g.max) } : g))
+        .filter((g) => g.items.length > 0);
+    }
+
     return groups
       .filter((g) => g.when !== "query" || q.length > 0)
       .map((g) => ({
@@ -99,11 +137,9 @@ function PaletteContent({
             (it.keywords?.toLowerCase().includes(q) ?? false)
         ),
       }))
-      .map((g) =>
-        g.max != null ? { ...g, items: g.items.slice(0, g.max) } : g
-      )
+      .map((g) => (g.max != null ? { ...g, items: g.items.slice(0, g.max) } : g))
       .filter((g) => g.items.length > 0);
-  }, [groups, query]);
+  }, [groups, query, remoteMode]);
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -157,24 +193,39 @@ function PaletteContent({
             type="text"
             value={query}
             onChange={(e) => {
-              setQuery(e.target.value);
+              const val = e.target.value;
+              setQuery(val);
               setSel(0);
+              onQueryChange?.(val);
             }}
-            placeholder="Search files, modules, docs, developers, actions…"
+            placeholder={placeholder || "Search files, modules, docs, code…"}
             autoComplete="off"
             spellCheck={false}
           />
           <span className="kbd">ESC</span>
         </div>
         <div className="pal-body" ref={bodyRef}>
-          {rows.length === 0 ? (
+          {loading ? (
+            <div className="state" style={{ padding: "36px" }}>
+              <span className="st-ic">
+                <Spinner />
+              </span>
+              <div className="st-title">Searching repository…</div>
+              <div className="st-sub">
+                Running semantic vector search and hybrid keyword matching
+              </div>
+            </div>
+          ) : rows.length === 0 ? (
             <div className="state" style={{ padding: "36px" }}>
               <span className="st-ic">
                 <Icon name="search" />
               </span>
-              <div className="st-title">No results</div>
+              <div className="st-title">{emptyState?.title || "No results"}</div>
               <div className="st-sub">
-                Nothing matches &quot;{query.trim()}&quot; in this project.
+                {emptyState?.sub ||
+                  (query.trim()
+                    ? `Nothing matches "${query.trim()}" in this project.`
+                    : "No indexed items available.")}
               </div>
             </div>
           ) : (

@@ -22,6 +22,13 @@ export interface ApiRepoItem {
   contributorsCount?: number;
   lastIndexedAt?: string;
   ingestionStatus?: string;
+  gitSyncStatus?: string;
+  syncStatus?: string;
+  latestCommitSha?: string;
+  lastSyncedCommitSha?: string;
+  lastGitSyncAt?: string;
+  lastSuccessfulSyncAt?: string;
+  lastSyncSummary?: string;
 }
 
 interface ShellContextType {
@@ -58,6 +65,13 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
   const refreshRepositories = useCallback(async (): Promise<ApiRepoItem[]> => {
     try {
       const res = await fetch("/api/repositories");
+      if (!res.ok) {
+        return [];
+      }
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        return [];
+      }
       const data = await res.json();
       if (data.success && Array.isArray(data.data)) {
         setAvailableRepos(data.data);
@@ -96,17 +110,30 @@ export function ShellProvider({ children }: { children: React.ReactNode }) {
       const found = prevRepos.find((r) => r.id === repoId || r.name === repoId);
       if (found) {
         setRepoState({
+          id: found.id,
           name: found.name,
           owner: found.owner,
           branch: found.defaultBranch || "main",
+          defaultBranch: found.defaultBranch || "main",
           lang: "TypeScript",
           updated: found.lastIndexedAt ? new Date(found.lastIndexedAt).toLocaleDateString() : "Just now",
           contributors: found.contributorsCount || 4,
+          contributorsCount: found.contributorsCount || 4,
           files: found.filesCount || 0,
+          filesCount: found.filesCount || 0,
           modules: found.modulesCount || 0,
+          modulesCount: found.modulesCount || 0,
           deps: found.depsCount || 0,
+          depsCount: found.depsCount || 0,
           private: true,
           desc: `Repository ${found.owner}/${found.name}`,
+          gitSyncStatus: found.gitSyncStatus,
+          syncStatus: found.syncStatus,
+          latestCommitSha: found.latestCommitSha,
+          lastSyncedCommitSha: found.lastSyncedCommitSha,
+          lastGitSyncAt: found.lastGitSyncAt,
+          lastSuccessfulSyncAt: found.lastSuccessfulSyncAt,
+          lastSyncSummary: found.lastSyncSummary,
         });
         setBranchState(found.defaultBranch || "main");
       } else {

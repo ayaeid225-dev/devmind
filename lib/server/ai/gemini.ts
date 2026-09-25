@@ -1,6 +1,5 @@
 import "server-only";
-import type { EvidenceResultItem } from "../rag/search";
-import { buildSystemPrompt, buildUserPrompt } from "./prompt";
+import { buildSystemPrompt, buildUserPrompt, type GenerateAnswerInput } from "./prompt";
 import { validateCitations, type EvidenceCitation } from "./validate";
 import type { AIAnswerResponse, LLMProvider } from "./provider";
 
@@ -14,49 +13,66 @@ export class GeminiLLMProvider implements LLMProvider {
     this.model = model;
   }
 
-  async generateAnswer(input: {
-    question: string;
-    evidence: EvidenceResultItem[];
-  }): Promise<AIAnswerResponse> {
+  async generateAnswer(input: GenerateAnswerInput): Promise<AIAnswerResponse> {
     const { question, evidence } = input;
 
-    if (evidence.length === 0) {
+    const isNotFound =
+      input.evidenceState === "NOT_FOUND" ||
+      (evidence.length === 0 &&
+        (!input.dependencies || input.dependencies.length === 0) &&
+        (!input.commits || input.commits.length === 0) &&
+        (!input.modules || input.modules.length === 0) &&
+        input.intent !== "GENERAL");
+
+    if (isNotFound) {
       return {
-        answer: "No relevant repository code evidence was found for your question. Try asking about authentication, appointment controllers, or patient modules.",
+        answer: `### Answer\n\nI couldn't verify this from the indexed repository data. No matching code files, modules, dependencies, or commits were found for "${question}".\n\n### Evidence\n\nNo matching indexed repository evidence was found.\n\n### Confidence\n\nNot Found — The requested entity or concept is not present in the indexed repository knowledge.`,
         confidence: 0,
+        confidenceLevel: "LOW",
+        evidenceState: "NOT_FOUND",
         citations: [],
         relatedFiles: [],
         insufficientEvidence: true,
+        intent: input.intent,
       };
     }
 
     const systemPrompt = buildSystemPrompt();
-    const userPrompt = buildUserPrompt(question, evidence);
+    const userPrompt = buildUserPrompt(input);
 
     const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: fullPrompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 1500,
+    let res: Response;
+    try {
+      res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      }),
-    });
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [{ text: fullPrompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 2000,
+          },
+        }),
+      });
+    } catch (networkErr: any) {
+      console.warn("Gemini network error. Falling back to local synthesis:", networkErr?.message);
+      const { DevelopmentMockLLMProvider } = await import("./provider");
+      return new DevelopmentMockLLMProvider().generateAnswer(input);
+    }
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Gemini API error (${res.status}): ${errText}`);
+      console.warn(`Gemini API returned error (${res.status}): ${errText}. Falling back to local synthesis.`);
+      const { DevelopmentMockLLMProvider } = await import("./provider");
+      return new DevelopmentMockLLMProvider().generateAnswer(input);
     }
 
     const data = await res.json();
@@ -65,7 +81,7 @@ export class GeminiLLMProvider implements LLMProvider {
 
     // Build citations from evidence
     const unvalidatedCitations: EvidenceCitation[] = evidence.map((item, idx) => ({
-      id: `ev-${idx + 1}`,
+      id: item.id || item.fileId || `ev-${idx + 1}`,
       path: item.path,
       startLine: item.startLine,
       endLine: item.endLine,
@@ -75,14 +91,32 @@ export class GeminiLLMProvider implements LLMProvider {
 
     const citations = validateCitations(unvalidatedCitations, evidence);
     const relatedFiles = Array.from(new Set(citations.map((c) => c.path)));
-    const avgScore = evidence.reduce((sum, item) => sum + item.score, 0) / evidence.length;
+    const avgScore =
+      evidence.length > 0 ? evidence.reduce((sum, item) => sum + item.score, 0) / evidence.length : 0.5;
+
+    const evidenceState =
+      input.evidenceState || (avgScore >= 0.55 ? "VERIFIED" : avgScore >= 0.3 ? "PARTIAL" : "NOT_FOUND");
+    const confidenceLevel: "HIGH" | "MEDIUM" | "LOW" =
+      evidenceState === "VERIFIED" && citations.length >= 2 ? "HIGH" : evidenceState === "PARTIAL" ? "MEDIUM" : "LOW";
 
     return {
       answer: rawAnswer,
       confidence: parseFloat(avgScore.toFixed(2)),
+      confidenceLevel,
+      evidenceState,
       citations,
       relatedFiles,
-      insufficientEvidence: false,
+      insufficientEvidence: evidenceState === "NOT_FOUND",
+      intent: input.intent,
+      impactAnalysis: input.impactAnalysis,
+      gitHistory: input.commits?.map((c) => ({
+        sha: c.sha,
+        shortSha: c.shortSha,
+        message: c.message,
+        author: c.authorName,
+        date: new Date(c.committedAt).toISOString(),
+        changeType: c.changeType,
+      })),
     };
   }
 
