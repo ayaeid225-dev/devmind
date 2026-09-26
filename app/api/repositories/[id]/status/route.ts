@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/server/db";
 import { getCurrentUser } from "@/lib/server/auth";
+import { ingestionProgressTracker } from "@/lib/server/ingestion/progress";
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +19,13 @@ export async function GET(
     }
 
     const repo = await db.repository.findFirst({
-      where: { id },
+      where: {
+        OR: [
+          { id },
+          { name: id },
+          ...(id.includes("/") ? [{ name: id.split("/")[1], owner: id.split("/")[0] }] : []),
+        ],
+      },
       select: {
         id: true,
         name: true,
@@ -52,9 +59,29 @@ export async function GET(
       );
     }
 
+    // Retrieve live progress telemetry if actively running or recently updated
+    const liveProgress =
+      ingestionProgressTracker.get(repo.id) ||
+      ingestionProgressTracker.get(repo.name) ||
+      ingestionProgressTracker.get(id);
+
+    const progress = liveProgress || {
+      status: repo.ingestionStatus as any,
+      stage: repo.ingestionStatus === "COMPLETED" ? ("FINALIZING" as const) : ("CONNECTING" as const),
+      percent: repo.ingestionStatus === "COMPLETED" ? 100 : 0,
+      processedFiles: repo.filesCount,
+      totalFiles: repo.filesCount,
+      startedAt: repo.startedAt?.toISOString(),
+      completedAt: repo.completedAt?.toISOString(),
+      error: repo.ingestionError || undefined,
+    };
+
     return NextResponse.json({
       success: true,
-      data: repo,
+      data: {
+        ...repo,
+        progress,
+      },
     });
   } catch (error) {
     console.error(`API GET /api/repositories/${id}/status error:`, error);

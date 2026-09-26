@@ -696,11 +696,18 @@ export async function fetchUserGitHubRepos(): Promise<GitHubRepoItem[]> {
   }
 }
 
-export async function fetchRepoBranches(owner: string, repo: string): Promise<Array<{ name: string; isDefault: boolean }>> {
-  const user = await getCurrentUser();
-  if (!user) return [{ name: "main", isDefault: true }];
-
-  const accessToken = await getUserAccessToken(user.id);
+export async function fetchRepoBranches(
+  owner: string,
+  repo: string,
+  explicitToken?: string
+): Promise<Array<{ name: string; isDefault: boolean }>> {
+  let accessToken = explicitToken;
+  if (!accessToken) {
+    const user = await getCurrentUser();
+    if (user) {
+      accessToken = (await getUserAccessToken(user.id)) || undefined;
+    }
+  }
   if (!accessToken) {
     return [{ name: "main", isDefault: true }];
   }
@@ -977,12 +984,16 @@ export async function fetchRepoCommits(
   owner: string,
   repo: string,
   branch = "main",
-  limit = 20
+  limit = 20,
+  explicitToken?: string
 ): Promise<GitHubCommitItem[]> {
-  const user = await getCurrentUser();
-  if (!user) return [];
-
-  const accessToken = await getUserAccessToken(user.id);
+  let accessToken = explicitToken;
+  if (!accessToken) {
+    const user = await getCurrentUser();
+    if (user) {
+      accessToken = (await getUserAccessToken(user.id)) || undefined;
+    }
+  }
   if (!accessToken) return [];
 
   try {
@@ -1018,12 +1029,16 @@ export async function fetchRepoCommits(
 export async function fetchRepoContributors(
   owner: string,
   repo: string,
-  limit = 20
+  limit = 20,
+  explicitToken?: string
 ): Promise<GitHubContributorItem[]> {
-  const user = await getCurrentUser();
-  if (!user) return [];
-
-  const accessToken = await getUserAccessToken(user.id);
+  let accessToken = explicitToken;
+  if (!accessToken) {
+    const user = await getCurrentUser();
+    if (user) {
+      accessToken = (await getUserAccessToken(user.id)) || undefined;
+    }
+  }
   if (!accessToken) return [];
 
   try {

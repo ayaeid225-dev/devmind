@@ -50,15 +50,31 @@ interface RepoStatusData {
   id: string;
   name: string;
   owner: string;
-  ingestionStatus: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | string;
+  ingestionStatus: "PENDING" | "PROCESSING" | "INDEXING" | "COMPLETED" | "FAILED" | string;
   ingestionProgress?: number;
   totalFiles?: number;
   processedFiles?: number;
   filesCount?: number;
   modulesCount?: number;
   depsCount?: number;
+  contributorsCount?: number;
+  commitsCount?: number;
   ingestionError?: string | null;
   lastSyncAt?: string | null;
+  progress?: {
+    status: string;
+    stage: "CONNECTING" | "FETCHING_TREE" | "PARSING_FILES" | "RESOLVING_DEPENDENCIES" | "SYNCING_GIT" | "FINALIZING";
+    percent: number;
+    processedFiles: number;
+    totalFiles: number;
+    currentFile?: string;
+    message?: string;
+    startedAt?: string;
+    completedAt?: string;
+    error?: string;
+    elapsedMs?: number;
+    estimatedRemainingMs?: number;
+  };
 }
 
 interface RoleOption {
@@ -215,6 +231,10 @@ function OnboardingContent() {
   const [repoStatus, setRepoStatus] = useState<RepoStatusData | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const [completingOnboarding, setCompletingOnboarding] = useState(false);
+  const [squashedCount, setSquashedCount] = useState(0);
+  const [bugPosition, setBugPosition] = useState({ x: 50, y: 50 });
+  const [bugHitAnim, setBugHitAnim] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Derive active step number
   const currentStep = stepParam === "repository" ? 2 : stepParam === "analyzing" ? 3 : 1;
@@ -433,13 +453,59 @@ function OnboardingContent() {
     }
 
     checkStatus();
-    pollInterval = setInterval(checkStatus, 2500);
+    pollInterval = setInterval(checkStatus, 600);
 
     return () => {
       isPolling = false;
       if (pollInterval) clearInterval(pollInterval);
     };
   }, [stepParam, analyzingRepoId, markOnboardingComplete]);
+
+  // Handle Retry Ingestion
+  const handleRetryIngestion = useCallback(async () => {
+    if (!analyzingRepoId || isRetrying) return;
+    setIsRetrying(true);
+    setRepoError(null);
+    try {
+      const parts = analyzingRepoId.split("/");
+      const owner = parts.length > 1 ? parts[0] : (selectedRepo?.owner?.login || user?.githubUsername || "unknown");
+      const repo = parts.length > 1 ? parts[1] : analyzingRepoId;
+
+      const res = await fetch("/api/repositories/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          owner,
+          repo,
+          branch: selectedRepo?.default_branch || "main",
+          force: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setIsCompleted(false);
+        setRepoStatus({
+          id: analyzingRepoId,
+          name: repo,
+          owner,
+          ingestionStatus: "INDEXING",
+          progress: {
+            status: "INDEXING",
+            stage: "CONNECTING",
+            percent: 5,
+            processedFiles: 0,
+            totalFiles: 0,
+            message: "Retrying repository analysis...",
+          },
+        });
+      }
+    } catch (err) {
+      console.error("Failed to retry ingestion:", err);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [analyzingRepoId, isRetrying, selectedRepo, user]);
 
   // Filter repositories for Step 2
   const filteredRepos = useMemo(() => {
@@ -952,254 +1018,407 @@ function OnboardingContent() {
       {/* =========================================================
           STEP 3: READY / REAL INGESTION TELEMETRY
       ========================================================= */}
-      {currentStep === 3 && (
-        <div className="flex-1 flex flex-col justify-between space-y-8">
-          <div className="space-y-6">
-            {/* Heading & Subtitle */}
-            <div className="space-y-1">
-              <h1 className="text-2xl font-semibold tracking-tight text-[#F2F1E8]">
-                {isCompleted
-                  ? "Your workspace is ready"
-                  : repoStatus?.ingestionStatus === "FAILED"
-                  ? "Workspace setup paused"
-                  : "Analyzing repository..."}
-              </h1>
-              <p className="text-sm text-[#A7AA9B]">
-                {isCompleted
-                  ? "DevMind has synthesized the repository architecture and engineering context."
-                  : repoStatus?.ingestionStatus === "FAILED"
-                  ? "Repository indexing encountered an unexpected problem. You can retry or proceed."
-                  : "Building your engineering context: modules, dependencies, and code graphs."}
-              </p>
-            </div>
+      {currentStep === 3 && (() => {
+        const progressData = repoStatus?.progress;
+        const currentPercent = isCompleted ? 100 : (progressData?.percent ?? (repoStatus?.ingestionStatus === "COMPLETED" ? 100 : 0));
+        const stageKey = progressData?.stage || (isCompleted ? "FINALIZING" : "CONNECTING");
+        
+        const STAGE_ORDER: Record<string, number> = {
+          CONNECTING: 1,
+          FETCHING_TREE: 2,
+          PARSING_FILES: 3,
+          RESOLVING_DEPENDENCIES: 4,
+          SYNCING_GIT: 5,
+          FINALIZING: 6,
+        };
+        const currentStageNum = isCompleted ? 7 : (STAGE_ORDER[stageKey] || 1);
 
-            {/* Calibrated Workspace Summary Card */}
-            <div className="rounded-lg border border-[#293024] bg-[#0E110F] p-4 space-y-3">
-              <div className="font-mono text-xs uppercase tracking-wider text-[#A7AA9B] font-medium border-b border-[#293024] pb-2">
-                Workspace Configuration
+        const STAGES = [
+          { key: "CONNECTING", order: 1, label: "Connect repository & verify access" },
+          { key: "FETCHING_TREE", order: 2, label: "Scan file tree & boundary detection" },
+          { key: "PARSING_FILES", order: 3, label: "Parse AST symbols & resolve imports" },
+          { key: "RESOLVING_DEPENDENCIES", order: 4, label: "Link module edges & package manifests" },
+          { key: "SYNCING_GIT", order: 5, label: "Extract contributors & commit history" },
+          { key: "FINALIZING", order: 6, label: "Finalize engineering architecture" },
+        ];
+
+        return (
+          <div className="flex-1 flex flex-col justify-between space-y-8">
+            <div className="space-y-6">
+              {/* Heading & Subtitle */}
+              <div className="space-y-1">
+                <h1 className="text-2xl font-semibold tracking-tight text-[#F2F1E8]">
+                  {isCompleted
+                    ? "Your workspace is ready"
+                    : repoStatus?.ingestionStatus === "FAILED"
+                    ? "Workspace setup paused"
+                    : "Analyzing repository..."}
+                </h1>
+                <p className="text-sm text-[#A7AA9B]">
+                  {isCompleted
+                    ? "DevMind has synthesized the repository architecture and engineering context."
+                    : repoStatus?.ingestionStatus === "FAILED"
+                    ? "Repository indexing encountered an unexpected problem. You can retry or proceed."
+                    : progressData?.message || "Building your engineering context: modules, dependencies, and code graphs."}
+                </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                {/* GitHub Account */}
-                <div className="space-y-1">
-                  <div className="font-mono text-[11px] text-[#6F756A]">Identity</div>
-                  <div className="flex items-center gap-2">
-                    {user?.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={user.avatarUrl}
-                        alt="Avatar"
-                        className="h-4 w-4 rounded-full border border-[#293024] object-cover"
-                      />
+              {/* Calibrated Workspace Summary Card */}
+              <div className="rounded-lg border border-[#293024] bg-[#0E110F] p-4 space-y-3">
+                <div className="font-mono text-xs uppercase tracking-wider text-[#A7AA9B] font-medium border-b border-[#293024] pb-2">
+                  Workspace Configuration
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  {/* GitHub Account */}
+                  <div className="space-y-1">
+                    <div className="font-mono text-[11px] text-[#6F756A]">Identity</div>
+                    <div className="flex items-center gap-2">
+                      {user?.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={user.avatarUrl}
+                          alt="Avatar"
+                          className="h-4 w-4 rounded-full border border-[#293024] object-cover"
+                        />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full bg-[#141813] flex items-center justify-center font-mono text-[9px] font-bold text-[#C8D62B]">
+                          {user?.initials || "EM"}
+                        </div>
+                      )}
+                      <span className="font-medium text-xs text-[#F2F1E8] truncate">
+                        {user?.name || "Developer"}{" "}
+                        <span className="font-mono text-[11px] text-[#6F756A]">
+                          ({user?.githubUsername ? `@${user.githubUsername}` : ""})
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Calibrated Role */}
+                  <div className="space-y-1">
+                    <div className="font-mono text-[11px] text-[#6F756A]">Role</div>
+                    <div className="text-xs font-medium text-[#F2F1E8]">
+                      {selectedRoleTitle}
+                    </div>
+                  </div>
+
+                  {/* Target Repository */}
+                  <div className="space-y-1">
+                    <div className="font-mono text-[11px] text-[#6F756A]">Repository</div>
+                    <div className="font-mono text-xs font-medium text-[#C8D62B] truncate">
+                      {analyzingRepoName || analyzingRepoId || "Connected Repository"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Truthful Real Progress Telemetry Card */}
+              <div className="rounded-lg border border-[#293024] bg-[#141813] p-4 space-y-4">
+                <div className="flex items-center justify-between border-b border-[#293024] pb-2.5">
+                  <div className="font-mono text-xs uppercase tracking-wider text-[#A7AA9B] font-medium flex items-center gap-2">
+                    <span>Indexing Telemetry</span>
+                    {!isCompleted && repoStatus?.ingestionStatus !== "FAILED" && (
+                      <span className="inline-block w-2 h-2 rounded-full bg-[#C8D62B] animate-ping" />
+                    )}
+                  </div>
+                  <div>
+                    {isCompleted ? (
+                      <Badge variant="lime" small>
+                        <span className="flex items-center gap-1 font-mono">
+                          <Icon name="check" className="h-2.5 w-2.5" /> Context Ready
+                        </span>
+                      </Badge>
+                    ) : repoStatus?.ingestionStatus === "FAILED" ? (
+                      <Badge variant="error" small>
+                        <span className="flex items-center gap-1 font-mono">
+                          <Icon name="alert" className="h-2.5 w-2.5" /> Indexing Paused
+                        </span>
+                      </Badge>
                     ) : (
-                      <div className="h-4 w-4 rounded-full bg-[#141813] flex items-center justify-center font-mono text-[9px] font-bold text-[#C8D62B]">
-                        {user?.initials || "EM"}
+                      <Badge variant="blue" small>
+                        <span className="flex items-center gap-1.5 font-mono">
+                          <Spinner size={10} /> Ingesting ({currentPercent}%)
+                        </span>
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress Bar & DevMind Moving Arrow (Phases 11 & 12) */}
+                <div className="space-y-1 pt-1">
+                  <div className="flex items-center justify-between font-mono text-xs text-[#A7AA9B]">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[#C8D62B] font-bold">
+                        {isCompleted ? "✓ Completed" : `→ Stage ${Math.min(6, currentStageNum)}/6:`}
+                      </span>
+                      <span className="text-[#F2F1E8]">
+                        {progressData?.message || (isCompleted ? "All repository context indexed" : "Analyzing repository architecture...")}
+                      </span>
+                    </span>
+                    <span className="font-bold text-[#C8D62B]">{currentPercent}%</span>
+                  </div>
+
+                  {/* Progress Track with Moving Arrow */}
+                  <div className="relative pt-2 pb-5">
+                    {/* Track Background */}
+                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#0E110F] border border-[#293024]">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#8BC34A] to-[#C8D62B] transition-all duration-300 ease-out"
+                        style={{ width: `${currentPercent}%` }}
+                      />
+                    </div>
+
+                    {/* Moving Arrow (Phase 12) following actual percentage */}
+                    <div
+                      className="absolute top-4.5 transform -translate-x-1/2 transition-all duration-300 ease-out pointer-events-none"
+                      style={{ left: `${Math.max(2, Math.min(98, currentPercent))}%` }}
+                      aria-hidden="true"
+                    >
+                      <div className="flex flex-col items-center">
+                        <span className="text-[12px] leading-none text-[#C8D62B]">▲</span>
+                        <span className="font-mono text-[9px] font-bold text-[#C8D62B] bg-[#0E110F] border border-[#293024] px-1 py-0.5 rounded shadow whitespace-nowrap">
+                          {currentPercent}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Real File Progress Counter & Active File Readout */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-1 font-mono text-xs">
+                    <div className="text-[#A7AA9B] flex items-center gap-2">
+                      <span className="text-[#6F756A]">Progress:</span>
+                      <span className="text-[#F2F1E8] font-medium">
+                        {progressData?.totalFiles
+                          ? `${progressData.processedFiles.toLocaleString()} / ${progressData.totalFiles.toLocaleString()} files`
+                          : repoStatus?.filesCount
+                          ? `${repoStatus.filesCount.toLocaleString()} files`
+                          : "Discovering file tree..."}
+                      </span>
+                      {progressData?.estimatedRemainingMs != null && progressData.estimatedRemainingMs > 0 && !isCompleted && (
+                        <span className="text-[#6F756A] text-[11px]">
+                          (~{Math.ceil(progressData.estimatedRemainingMs / 1000)}s remaining)
+                        </span>
+                      )}
+                    </div>
+
+                    {progressData?.elapsedMs != null && (
+                      <div className="text-[#6F756A] text-[11px]">
+                        Elapsed: {(progressData.elapsedMs / 1000).toFixed(1)}s
                       </div>
                     )}
-                    <span className="font-medium text-xs text-[#F2F1E8] truncate">
-                      {user?.name || "Developer"}{" "}
-                      <span className="font-mono text-[11px] text-[#6F756A]">
-                        ({user?.githubUsername ? `@${user.githubUsername}` : ""})
-                      </span>
-                    </span>
                   </div>
-                </div>
 
-                {/* Calibrated Role */}
-                <div className="space-y-1">
-                  <div className="font-mono text-[11px] text-[#6F756A]">Role</div>
-                  <div className="text-xs font-medium text-[#F2F1E8]">
-                    {selectedRoleTitle}
-                  </div>
-                </div>
-
-                {/* Target Repository */}
-                <div className="space-y-1">
-                  <div className="font-mono text-[11px] text-[#6F756A]">Repository</div>
-                  <div className="font-mono text-xs font-medium text-[#C8D62B] truncate">
-                    {analyzingRepoName || analyzingRepoId || "Connected Repository"}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Truthful Telemetry Card */}
-            <div className="rounded-lg border border-[#293024] bg-[#141813] p-4 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#293024] pb-2.5">
-                <div className="font-mono text-xs uppercase tracking-wider text-[#A7AA9B] font-medium">
-                  Indexing Telemetry
-                </div>
-                <div>
-                  {isCompleted ? (
-                    <Badge variant="lime" small>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Icon name="check" className="h-2.5 w-2.5" /> Context Ready
-                      </span>
-                    </Badge>
-                  ) : repoStatus?.ingestionStatus === "FAILED" ? (
-                    <Badge variant="error" small>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Icon name="alert" className="h-2.5 w-2.5" /> Indexing Paused
-                      </span>
-                    </Badge>
-                  ) : (
-                    <Badge variant="blue" small>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Spinner size={10} /> Ingesting...
-                      </span>
-                    </Badge>
+                  {/* Active Processing File Path */}
+                  {progressData?.currentFile && !isCompleted && (
+                    <div className="mt-2 flex items-center gap-2 font-mono text-[11px] bg-[#0E110F] border border-[#293024] px-3 py-1.5 rounded text-[#A7AA9B] truncate">
+                      <span className="text-[#C8D62B] font-bold shrink-0">➜</span>
+                      <span className="text-[#6F756A] shrink-0">Currently processing:</span>
+                      <span className="text-[#F2F1E8] truncate font-medium">{progressData.currentFile}</span>
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* Truthful Real Checkpoints */}
-              <div className="space-y-3 font-mono text-xs">
-                {/* Checkpoint 1: Files */}
-                <div className="flex items-center justify-between py-0.5">
-                  <div className="flex items-center gap-2.5">
-                    {filesState.isDone ? (
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#8BC34A]/20 text-[#8BC34A]">
-                        ✓
-                      </span>
-                    ) : filesState.isLoading ? (
-                      <Spinner size={11} />
-                    ) : (
-                      <span className="h-4 w-4 rounded-full border border-[#293024] flex items-center justify-center text-[9px] text-[#6F756A]">
-                        1
-                      </span>
-                    )}
-                    <span className={filesState.isDone ? "text-[#F2F1E8]" : "text-[#A7AA9B]"}>
-                      Scan repository file tree
-                    </span>
-                  </div>
-                  <span className="text-[#A7AA9B]">
-                    {filesState.label}
-                  </span>
-                </div>
-
-                {/* Checkpoint 2: Modules */}
-                <div className="flex items-center justify-between py-0.5">
-                  <div className="flex items-center gap-2.5">
-                    {modulesState.isDone ? (
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#8BC34A]/20 text-[#8BC34A]">
-                        ✓
-                      </span>
-                    ) : modulesState.isLoading ? (
-                      <Spinner size={11} />
-                    ) : (
-                      <span className="h-4 w-4 rounded-full border border-[#293024] flex items-center justify-center text-[9px] text-[#6F756A]">
-                        2
-                      </span>
-                    )}
-                    <span className={modulesState.isDone ? "text-[#F2F1E8]" : "text-[#6F756A]"}>
-                      Extract module boundaries & architecture
-                    </span>
-                  </div>
-                  <span className="text-[#A7AA9B]">
-                    {modulesState.label}
-                  </span>
-                </div>
-
-                {/* Checkpoint 3: Dependencies */}
-                <div className="flex items-center justify-between py-0.5">
-                  <div className="flex items-center gap-2.5">
-                    {depsState.isDone ? (
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#8BC34A]/20 text-[#8BC34A]">
-                        ✓
-                      </span>
-                    ) : depsState.isLoading ? (
-                      <Spinner size={11} />
-                    ) : (
-                      <span className="h-4 w-4 rounded-full border border-[#293024] flex items-center justify-center text-[9px] text-[#6F756A]">
-                        3
-                      </span>
-                    )}
-                    <span className={depsState.isDone ? "text-[#F2F1E8]" : "text-[#6F756A]"}>
-                      Map import dependencies & call graph
-                    </span>
-                  </div>
-                  <span className="text-[#A7AA9B]">
-                    {depsState.label}
-                  </span>
+                {/* Granular Stages Checklist (Phase 11) */}
+                <div className="space-y-2 pt-3 border-t border-[#293024] font-mono text-xs">
+                  {STAGES.map((st) => {
+                    const isDone = isCompleted || currentStageNum > st.order;
+                    const isActive = !isCompleted && currentStageNum === st.order;
+                    return (
+                      <div key={st.key} className="flex items-center justify-between py-0.5">
+                        <div className="flex items-center gap-2.5">
+                          {isDone ? (
+                            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#8BC34A]/20 text-[#8BC34A] text-[10px] font-bold">
+                              ✓
+                            </span>
+                          ) : isActive ? (
+                            <span className="flex h-4 w-4 items-center justify-center">
+                              <Spinner size={11} />
+                            </span>
+                          ) : (
+                            <span className="h-4 w-4 rounded-full border border-[#293024] flex items-center justify-center text-[9px] text-[#6F756A]">
+                              {st.order}
+                            </span>
+                          )}
+                          <span className={isDone ? "text-[#F2F1E8]" : isActive ? "text-[#C8D62B] font-medium" : "text-[#6F756A]"}>
+                            {st.label}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#6F756A]">
+                          {isDone ? "Completed" : isActive ? "Active..." : "Pending"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
 
-            {/* Error recovery card if failed */}
-            {repoStatus?.ingestionStatus === "FAILED" && (
-              <div
-                role="alert"
-                className="rounded-lg border border-[#D85C55]/30 bg-[#D85C55]/10 p-3.5 text-xs text-[#D85C55] space-y-2"
-              >
-                <div className="flex items-center gap-2 font-semibold">
-                  <Icon name="alert" className="h-4 w-4" />
-                  <span>Ingestion problem encountered</span>
-                </div>
-                <p className="text-[#A7AA9B] leading-relaxed">
-                  {repoStatus.ingestionError || "An unexpected issue occurred while parsing this repository."}
-                </p>
-                <div className="flex items-center gap-2.5 pt-1">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => router.push("/onboarding?step=repository")}
-                  >
-                    Choose another repository
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={async () => {
-                      await markOnboardingComplete();
-                      const targetUrl = analyzingRepoId
-                        ? `/app/overview?repoId=${encodeURIComponent(analyzingRepoId)}`
-                        : "/app/overview";
-                      router.push(targetUrl);
+              {/* Phase 13: Optional Small Waiting Interaction - Catch the Bug */}
+              {!isCompleted && repoStatus?.ingestionStatus !== "FAILED" && (
+                <div className="rounded-lg border border-[#293024] bg-[#0E110F] p-3 text-xs space-y-2">
+                  <div className="flex items-center justify-between text-[#A7AA9B] font-mono text-[11px]">
+                    <span className="flex items-center gap-1.5">
+                      <span>Waiting for repository analysis? Squash the bug:</span>
+                    </span>
+                    <span className="text-[#C8D62B] font-bold">
+                      {squashedCount > 0 ? `${squashedCount} squashed!` : "0 squashed"}
+                    </span>
+                  </div>
+                  <div
+                    className="relative h-16 w-full rounded border border-[#293024] bg-[#141813] overflow-hidden select-none cursor-pointer"
+                    onClick={() => {
+                      setSquashedCount((c) => c + 1);
+                      setBugHitAnim(true);
+                      setTimeout(() => setBugHitAnim(false), 600);
+                      setBugPosition({
+                        x: Math.floor(Math.random() * 80) + 10,
+                        y: Math.floor(Math.random() * 60) + 15,
+                      });
                     }}
                   >
-                    Continue to Dashboard anyway
-                  </Button>
+                    <div
+                      className="absolute transition-all duration-300 ease-out transform -translate-x-1/2 -translate-y-1/2 text-xl hover:scale-125 active:scale-90"
+                      style={{ left: `${bugPosition.x}%`, top: `${bugPosition.y}%` }}
+                      title="Click to squash!"
+                    >
+                      🐞
+                    </div>
+                    {bugHitAnim && (
+                      <div
+                        className="absolute font-mono text-[11px] font-bold text-[#C8D62B] animate-ping"
+                        style={{ left: `${bugPosition.x}%`, top: `${Math.max(10, bugPosition.y - 20)}%` }}
+                      >
+                        +1 Squashed!
+                      </div>
+                    )}
+                    <div className="absolute bottom-1 right-2 font-mono text-[9px] text-[#6F756A] pointer-events-none">
+                      Click the bug to pass the time
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* Step 3 Actions */}
-          <div className="flex items-center justify-between pt-6 border-t border-[#293024]">
-            <span className="font-mono text-xs text-[#6F756A]">
-              {isCompleted
-                ? "Workspace ready"
-                : repoStatus?.ingestionStatus === "FAILED"
-                ? "Setup paused"
-                : "Indexing runs reliably in the background"}
-            </span>
-
-            <Button
-              variant="primary"
-              size="md"
-              disabled={completingOnboarding}
-              onClick={async () => {
-                await markOnboardingComplete();
-                const targetUrl = analyzingRepoId
-                  ? `/app/overview?repoId=${encodeURIComponent(analyzingRepoId)}`
-                  : "/app/overview";
-                router.push(targetUrl);
-              }}
-              className="min-w-[160px]"
-            >
-              {completingOnboarding ? (
-                <span className="flex items-center gap-2">
-                  <Spinner size={13} /> Finalizing...
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 font-medium">
-                  Open workspace <Icon name="arrowRight" className="h-3.5 w-3.5" />
-                </span>
               )}
-            </Button>
+
+              {/* Phase 14: Completion UI with Real Statistics */}
+              {isCompleted && (
+                <div className="rounded-lg border border-[#8BC34A]/30 bg-[#8BC34A]/10 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#8BC34A]">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#8BC34A]/20">✓</span>
+                    <span>Repository successfully analyzed</span>
+                  </div>
+                  <p className="text-xs text-[#A7AA9B] leading-relaxed">
+                    DevMind has synthesized the repository architecture, extracted module boundaries, and indexed dependencies.
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
+                    <div className="bg-[#0E110F] border border-[#293024] p-2.5 rounded">
+                      <div className="text-[10px] text-[#6F756A]">Files</div>
+                      <div className="text-sm font-bold text-[#F2F1E8]">
+                        {(repoStatus?.filesCount ?? progressData?.totalFiles ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="bg-[#0E110F] border border-[#293024] p-2.5 rounded">
+                      <div className="text-[10px] text-[#6F756A]">Modules</div>
+                      <div className="text-sm font-bold text-[#C8D62B]">
+                        {(repoStatus?.modulesCount ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="bg-[#0E110F] border border-[#293024] p-2.5 rounded">
+                      <div className="text-[10px] text-[#6F756A]">Dependencies</div>
+                      <div className="text-sm font-bold text-[#4A90E2]">
+                        {(repoStatus?.depsCount ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="bg-[#0E110F] border border-[#293024] p-2.5 rounded">
+                      <div className="text-[10px] text-[#6F756A]">Indexing Time</div>
+                      <div className="text-sm font-bold text-[#F2F1E8]">
+                        {progressData?.elapsedMs ? `${(progressData.elapsedMs / 1000).toFixed(1)}s` : "Complete"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Phase 15: Error recovery card if failed */}
+              {repoStatus?.ingestionStatus === "FAILED" && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-[#D85C55]/30 bg-[#D85C55]/10 p-4 text-xs text-[#D85C55] space-y-3"
+                >
+                  <div className="flex items-center gap-2 font-semibold text-sm">
+                    <Icon name="alert" className="h-4 w-4" />
+                    <span>Repository ingestion failed</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="font-mono text-[11px] text-[#A7AA9B]">
+                      Failed at stage: <span className="text-[#F2F1E8] font-semibold">{progressData?.stage || "Processing"}</span>
+                    </div>
+                    <p className="text-[#A7AA9B] leading-relaxed">
+                      {repoStatus.ingestionError || progressData?.error || "An unexpected issue occurred while parsing this repository."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2.5 pt-1">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={isRetrying}
+                      onClick={handleRetryIngestion}
+                    >
+                      {isRetrying ? (
+                        <span className="flex items-center gap-1.5">
+                          <Spinner size={11} /> Retrying...
+                        </span>
+                      ) : (
+                        <span>Retry analysis</span>
+                      )}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => router.push("/onboarding?step=repository")}
+                    >
+                      Choose another repository
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Step 3 Actions */}
+            <div className="flex items-center justify-between pt-6 border-t border-[#293024]">
+              <span className="font-mono text-xs text-[#6F756A]">
+                {isCompleted
+                  ? "Workspace ready"
+                  : repoStatus?.ingestionStatus === "FAILED"
+                  ? "Setup paused"
+                  : "Indexing runs reliably in the background"}
+              </span>
+
+              <Button
+                variant="primary"
+                size="md"
+                disabled={completingOnboarding || (!isCompleted && repoStatus?.ingestionStatus !== "FAILED")}
+                onClick={async () => {
+                  await markOnboardingComplete();
+                  const targetUrl = analyzingRepoId
+                    ? `/app/overview?repoId=${encodeURIComponent(analyzingRepoId)}`
+                    : "/app/overview";
+                  router.push(targetUrl);
+                }}
+                className="min-w-[160px]"
+              >
+                {completingOnboarding ? (
+                  <span className="flex items-center gap-2">
+                    <Spinner size={13} /> Finalizing...
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 font-medium">
+                    Open workspace <Icon name="arrowRight" className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </OnboardingShell>
   );
 }

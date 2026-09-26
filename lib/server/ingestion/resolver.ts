@@ -1071,3 +1071,134 @@ export async function handleDeletedFiles(
 
   return deletedPaths.length;
 }
+
+export interface BatchDependencyInput {
+  key: string;
+  repoId: string;
+  sourceFile?: string | null;
+  targetFile?: string | null;
+  importSource?: string | null;
+  dependencyType: string;
+  kind: "internal" | "external";
+  language?: string | null;
+  resolutionStatus: string;
+  name?: string | null;
+  version?: string | null;
+  purpose?: string | null;
+  status?: string;
+  fromModule?: string | null;
+  toModule?: string | null;
+}
+
+/**
+ * High-performance batched persistence for all repository dependencies.
+ * Consolidates file imports, manifest dependencies, and module edges into
+ * chunked transactions, reducing hundreds/thousands of DB round-trips to <5.
+ */
+export async function syncRepositoryDependenciesBatch(
+  prisma: any,
+  repoId: string,
+  dependencies: BatchDependencyInput[]
+): Promise<number> {
+  if (dependencies.length === 0) {
+    await prisma.dependencyRecord.deleteMany({ where: { repoId } });
+    return 0;
+  }
+
+  // Deduplicate in memory by key
+  const uniqueDepMap = new Map<string, BatchDependencyInput>();
+  for (const dep of dependencies) {
+    if (dep.key) {
+      uniqueDepMap.set(dep.key, dep);
+    }
+  }
+
+  // Fetch all existing dependency keys for this repository
+  const existingRecords = await prisma.dependencyRecord.findMany({
+    where: { repoId },
+    select: { id: true, key: true },
+  });
+
+  const existingMap = new Map<string, string>(); // key -> id
+  const obsoleteIds: string[] = [];
+
+  for (const rec of existingRecords) {
+    if (rec.key) {
+      if (uniqueDepMap.has(rec.key)) {
+        existingMap.set(rec.key, rec.id);
+      } else {
+        obsoleteIds.push(rec.id);
+      }
+    }
+  }
+
+  // Delete obsolete dependencies in batches
+  if (obsoleteIds.length > 0) {
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < obsoleteIds.length; i += CHUNK_SIZE) {
+      const slice = obsoleteIds.slice(i, i + CHUNK_SIZE);
+      await prisma.dependencyRecord.deleteMany({
+        where: { id: { in: slice } },
+      });
+    }
+  }
+
+  // Prepare batch operations
+  const operations: any[] = [];
+  for (const dep of uniqueDepMap.values()) {
+    const existingId = existingMap.get(dep.key);
+    if (existingId) {
+      operations.push(
+        prisma.dependencyRecord.update({
+          where: { id: existingId },
+          data: {
+            sourceFile: dep.sourceFile,
+            targetFile: dep.targetFile,
+            importSource: dep.importSource,
+            dependencyType: dep.dependencyType,
+            kind: dep.kind,
+            language: dep.language,
+            resolutionStatus: dep.resolutionStatus,
+            name: dep.name,
+            version: dep.version,
+            purpose: dep.purpose,
+            status: dep.status || "active",
+            fromModule: dep.fromModule,
+            toModule: dep.toModule,
+          },
+        })
+      );
+    } else {
+      operations.push(
+        prisma.dependencyRecord.create({
+          data: {
+            key: dep.key,
+            repoId,
+            sourceFile: dep.sourceFile,
+            targetFile: dep.targetFile,
+            importSource: dep.importSource,
+            dependencyType: dep.dependencyType,
+            kind: dep.kind,
+            language: dep.language,
+            resolutionStatus: dep.resolutionStatus,
+            name: dep.name,
+            version: dep.version,
+            purpose: dep.purpose,
+            status: dep.status || "active",
+            fromModule: dep.fromModule,
+            toModule: dep.toModule,
+          },
+        })
+      );
+    }
+  }
+
+  // Execute in transactions of 80 operations to prevent SQLite statement limit issues
+  const TX_CHUNK_SIZE = 80;
+  for (let i = 0; i < operations.length; i += TX_CHUNK_SIZE) {
+    const batch = operations.slice(i, i + TX_CHUNK_SIZE);
+    await prisma.$transaction(batch);
+  }
+
+  return uniqueDepMap.size;
+}
