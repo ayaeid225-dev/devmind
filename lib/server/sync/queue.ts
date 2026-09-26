@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "../db";
 import { detectIncrementalChanges, processIncrementalSync } from "./incremental";
 import { ingestRepository } from "../ingestion";
+import { notifyRepoMembers } from "../notifications";
 import type { SyncOptions, SyncResult } from "./types";
 
 // In-memory map of actively syncing repository promises to prevent concurrent sync executions
@@ -155,7 +156,8 @@ export async function executeSyncJob(
 
   const repo = job.repo;
   const newCommitSha = job.afterSha;
-  const beforeSha = job.beforeSha || repo.lastSyncedCommitSha || repo.latestCommitSha || null;
+  const beforeSha =
+    job.beforeSha || repo.lastSyncedCommitSha || repo.latestCommitSha || null;
 
   let commits = runtimeOptions?.commits;
   if (!commits && job.commitsJson) {
@@ -165,7 +167,10 @@ export async function executeSyncJob(
   }
 
   const syncOptions: SyncOptions = {
-    branch: job.ref?.replace(/^refs\/heads\//, "") || repo.defaultBranch || "main",
+    branch:
+      job.ref?.replace(/^refs\/heads\//, "") ||
+      repo.defaultBranch ||
+      "main",
     pusher: runtimeOptions?.pusher,
     token: runtimeOptions?.token,
     commits,
@@ -205,10 +210,28 @@ export async function executeSyncJob(
           completedAt: new Date(),
         },
       });
+
+      try {
+        await notifyRepoMembers(repo.id, {
+          type: "SYNC_COMPLETED",
+          title: "Synchronization completed",
+          message: `Synced commit ${newCommitSha.slice(0, 7)}: ${result.summary}`,
+          entityId: jobId,
+          link: `/app/overview?repoId=${encodeURIComponent(repo.id)}`,
+          dedupeKey: `sync-job:${jobId}:COMPLETED`,
+        });
+      } catch (notifErr) {
+        console.warn(
+          "Non-fatal: Failed to create incremental sync notification:",
+          notifErr
+        );
+      }
     } else {
       // 3. Full Sync Fallback
       console.log(
-        `[Sync] Falling back to full sync for ${repo.owner}/${repo.name}: ${detection.reason || "Full sync requested"}`
+        `[Sync] Falling back to full sync for ${repo.owner}/${repo.name}: ${
+          detection.reason || "Full sync requested"
+        }`
       );
 
       const fullResult = await ingestRepository({
@@ -246,11 +269,30 @@ export async function executeSyncJob(
           completedAt: new Date(),
         },
       });
+
+      try {
+        await notifyRepoMembers(repo.id, {
+          type: "SYNC_COMPLETED",
+          title: "Synchronization completed",
+          message: `Full sync completed: ${summary}`,
+          entityId: jobId,
+          link: `/app/overview?repoId=${encodeURIComponent(repo.id)}`,
+          dedupeKey: `sync-job:${jobId}:COMPLETED`,
+        });
+      } catch (notifErr) {
+        console.warn(
+          "Non-fatal: Failed to create full sync notification:",
+          notifErr
+        );
+      }
     }
 
     return result;
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Sync job execution failed";
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : "Sync job execution failed";
 
     try {
       await db.syncJob.update({
@@ -262,6 +304,22 @@ export async function executeSyncJob(
         },
       });
     } catch {}
+
+    try {
+      await notifyRepoMembers(repo.id, {
+        type: "SYNC_FAILED",
+        title: "Synchronization failed",
+        message: `Synchronization failed for ${repo.owner}/${repo.name}: ${errorMsg}`,
+        entityId: jobId,
+        link: `/app/overview?repoId=${encodeURIComponent(repo.id)}`,
+        dedupeKey: `sync-job:${jobId}:FAILED`,
+      });
+    } catch (notifErr) {
+      console.warn(
+        "Non-fatal: Failed to create sync failure notification:",
+        notifErr
+      );
+    }
 
     throw error;
   }

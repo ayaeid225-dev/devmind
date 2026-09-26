@@ -1,4 +1,3 @@
-// Prisma Schema for DevMind Domain Architecture
 generator client {
   provider = "prisma-client-js"
 }
@@ -23,6 +22,7 @@ model User {
   memberships         OrgMember[]
   learningProgress    LearningProgress[]
   githubAccount       GitHubAccount?
+  notifications       Notification[]
 }
 
 model GitHubAccount {
@@ -41,14 +41,15 @@ model GitHubAccount {
 }
 
 model Organization {
-  id        String      @id @default(cuid())
-  name      String
-  slug      String      @unique
-  avatarUrl String?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  members   OrgMember[]
-  projects  Project[]
+  id            String         @id @default(cuid())
+  name          String
+  slug          String         @unique
+  avatarUrl     String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  members       OrgMember[]
+  projects      Project[]
+  notifications Notification[]
 }
 
 model OrgMember {
@@ -64,15 +65,16 @@ model OrgMember {
 }
 
 model Project {
-  id           String       @id @default(cuid())
-  orgId        String
-  name         String
-  slug         String       @unique
-  description  String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  repositories Repository[]
+  id            String         @id @default(cuid())
+  orgId         String
+  name          String
+  slug          String         @unique
+  description   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repositories  Repository[]
+  notifications Notification[]
 }
 
 model Repository {
@@ -108,7 +110,7 @@ model Repository {
   contributorsCount    Int                @default(0)
   lastIndexedAt        DateTime           @default(now())
   createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  updatedAt             DateTime           @updatedAt
   project              Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
   branches             Branch[]
   modules              Module[]
@@ -121,6 +123,7 @@ model Repository {
   commits              CommitRecord[]
   contributors         ContributorRecord[]
   syncJobs             SyncJob[]
+  notifications        Notification[]
 
   @@index([projectId])
   @@index([owner, name])
@@ -158,22 +161,22 @@ model Module {
 }
 
 model FileRecord {
-  id             String          @id @default(cuid())
-  repoId         String
-  moduleId       String?
-  path           String
-  size           String
-  type           String          // code, doc, test
-  language       String          @default("UNKNOWN")
-  parsingStatus  String          @default("UNSUPPORTED") // PARSED, UNSUPPORTED, FAILED
-  parsingError   String?
-  lineCount      Int             @default(0)
-  symbolsJson    String?         // Structured AST symbols JSON payload
-  updatedText    String
-  createdAt      DateTime        @default(now())
-  repo           Repository      @relation(fields: [repoId], references: [id], onDelete: Cascade)
-  module         Module?         @relation(fields: [moduleId], references: [id], onDelete: SetNull)
-  documentChunks DocumentChunk[]
+  id              String          @id @default(cuid())
+  repoId          String
+  moduleId        String?
+  path            String
+  size            String
+  type            String          // code, doc, test
+  language        String          @default("UNKNOWN")
+  parsingStatus   String          @default("UNSUPPORTED") // PARSED, UNSUPPORTED, FAILED
+  parsingError    String?
+  lineCount       Int             @default(0)
+  symbolsJson     String?         // Structured AST symbols JSON payload
+  updatedText     String
+  createdAt       DateTime        @default(now())
+  repo            Repository      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  module          Module?         @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  documentChunks  DocumentChunk[]
 
   @@unique([repoId, path])
   @@index([repoId, language])
@@ -392,3 +395,30 @@ model SyncJob {
   @@index([deliveryId])
 }
 
+model Notification {
+  id         String        @id @default(cuid())
+  userId     String
+  orgId      String?
+  projectId  String?
+  repoId     String?
+  type       String        // INGESTION_COMPLETED, INGESTION_FAILED, INGESTION_PARTIAL, SYNC_COMPLETED, SYNC_FAILED, REPO_CONNECTED, GITHUB_SYNC_ISSUE, ACTIVITY
+  title      String
+  message    String
+  read       Boolean       @default(false)
+  entityId   String?       // Reference ID (job ID, commit SHA, repo ID, etc.)
+  link       String?       // Navigation target URL
+  dedupeKey  String?       @unique // Deterministic idempotency key
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org        Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project    Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repo       Repository?   @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@index([repoId])
+  @@index([orgId])
+  @@index([projectId])
+}

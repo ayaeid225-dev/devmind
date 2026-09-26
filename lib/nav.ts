@@ -60,6 +60,8 @@ export const SUB_META: Record<string, SubMeta> = {
   learning: { title: "Learning Path", icon: "learning", crumb: ["Workspace", "Learning Path"] },
   settings: { title: "Settings", icon: "settings", crumb: ["Workspace", "Settings"] },
   help: { title: "Help", icon: "help", crumb: ["Workspace", "Help"] },
+  notifications: { title: "Notifications", icon: "bell", crumb: ["Workspace", "Notifications"] },
+
 };
 
 export interface ShellMeta {

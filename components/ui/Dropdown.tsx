@@ -1,47 +1,45 @@
 "use client";
 
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactElement,
-  type ReactNode,
-} from "react";
-import { Icon, type IconName } from "./Icon";
-import { cx } from "./cx";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
-export type DropdownItem =
-  | { kind?: "item"; pick?: string; icon?: IconName; label: ReactNode }
-  | { kind: "sep" }
-  | { kind: "label"; label: ReactNode }
-  | { kind: "custom"; node: ReactNode };
+export interface DropdownItem {
+  kind?: "item" | "sep" | "label" | "custom";
+  label?: React.ReactNode;
+  icon?: string;
+  value?: string;
+  pick?: string;
+  node?: React.ReactNode;
+  disabled?: boolean;
+}
 
 export interface DropdownProps {
-  trigger: ReactElement;
-  items: readonly DropdownItem[];
+  trigger: React.ReactNode;
+  items: DropdownItem[];
   onSelect?: (pick: string) => void;
   /** Stretch the trigger wrapper full-width (sidebar repo card). */
   block?: boolean;
+  /** Align menu to left or right of the anchor trigger. */
+  align?: "left" | "right";
   className?: string;
 }
 
-/*
- * Ported from U.dropdown(): positions a .menu below the anchor at
- * top = bottom+6, left = min(anchor.left + 240, innerWidth - 8);
- * closes on outside mousedown (listener attached on next tick).
- */
 export function Dropdown({
   trigger,
   items,
   onSelect,
   block,
+  align,
   className,
 }: DropdownProps) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const [pos, setPos] = useState<{
+    top: number;
+    left?: number;
+    right?: number;
+  } | null>(null);
+
   const open = pos !== null;
 
   const close = useCallback(() => setPos(null), []);
@@ -49,73 +47,133 @@ export function Dropdown({
   const show = useCallback(() => {
     const r = anchorRef.current?.getBoundingClientRect();
     if (!r) return;
-    setPos({
-      top: r.bottom + 6,
-      left: Math.min(r.left + 240, window.innerWidth - 8),
-    });
-  }, []);
+
+    if (align === "right" || r.left + 260 > window.innerWidth) {
+      setPos({
+        top: r.bottom + 6,
+        right: Math.max(8, window.innerWidth - r.right),
+      });
+    } else {
+      setPos({
+        top: r.bottom + 6,
+        left: Math.max(8, r.left),
+      });
+    }
+  }, [align]);
 
   useEffect(() => {
     if (!open) return;
-    const outside = (ev: MouseEvent) => {
-      const t = ev.target as Node;
-      if (!menuRef.current?.contains(t) && !anchorRef.current?.contains(t)) {
+
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (
+        !anchorRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         close();
       }
     };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+
+    const onResize = () => {
+      show();
+    };
+
     const timer = window.setTimeout(() => {
-      document.addEventListener("mousedown", outside);
+      document.addEventListener("mousedown", onMouseDown);
     }, 0);
+
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onResize);
+
     return () => {
       window.clearTimeout(timer);
-      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onResize);
     };
-  }, [open, close]);
+  }, [open, close, show]);
 
-  const triggerEl = trigger as ReactElement;
+  const handleTriggerClick = () => {
+    if (open) {
+      close();
+    } else {
+      show();
+    }
+  };
 
   return (
-    <>
-      <span
-        ref={anchorRef}
-        className={cx("dm-dropdown-anchor", className)}
-        style={block ? { display: "block", width: "100%" } : { display: "inline-flex" }}
-        onClick={() => (open ? close() : show())}
-      >
-        {triggerEl}
+    <span
+      ref={anchorRef}
+      className={className}
+      style={block ? { display: "block" } : undefined}
+    >
+      <span onClick={handleTriggerClick} style={{ cursor: "pointer" }}>
+        {trigger}
       </span>
-      {open && (
+
+      {open && pos && (
         <div
           ref={menuRef}
           className="menu"
-          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          style={{
+            position: "fixed",
+            top: pos.top,
+            ...(pos.right !== undefined
+              ? { right: pos.right }
+              : { left: pos.left }),
+          }}
         >
           {items.map((it, i) => {
-            if (it.kind === "sep") return <div key={i} className="menu-sep" />;
-            if (it.kind === "label")
+            if (it.kind === "sep") {
+              return <div key={i} className="menu-sep" />;
+            }
+
+            if (it.kind === "label") {
               return (
                 <div key={i} className="menu-label">
                   {it.label}
                 </div>
               );
-            if (it.kind === "custom") return <Fragment key={i}>{it.node}</Fragment>;
+            }
+
+            if (it.kind === "custom") {
+              return (
+                <React.Fragment key={i}>
+                  {it.node}
+                </React.Fragment>
+              );
+            }
+
+            const pick = it.pick ?? it.value;
+
             return (
-              <button
-                key={`${i}-${it.pick ?? "item"}`}
-                type="button"
-                className="menu-item"
+              <div
+                key={it.value ?? it.pick ?? i}
+                className={`menu-item${it.disabled ? " disabled" : ""}`}
                 onClick={() => {
+                  if (it.disabled) return;
+
+                  if (pick !== undefined) {
+                    onSelect?.(pick);
+                  }
+
                   close();
-                  if (it.pick !== undefined) onSelect?.(it.pick);
                 }}
               >
-                {it.icon ? <Icon name={it.icon} /> : null}
-                {it.label}
-              </button>
+                {it.icon && <span>{it.icon}</span>}
+                <span>{it.label}</span>
+              </div>
             );
           })}
         </div>
       )}
-    </>
+    </span>
   );
 }

@@ -172,6 +172,14 @@ export function buildDefaultPaletteGroups(
         cat: "Docs",
         onSelect: () => go(`/app/docs?repoId=${encodeURIComponent(repoId)}`),
       },
+      {
+        id: "action:notifications",
+        icon: "spark",
+        name: "Notifications",
+        sub: `View notifications and sync updates for ${repoContext.name}`,
+        cat: "Workspace",
+        onSelect: () => go(`/app/notifications?repoId=${encodeURIComponent(repoId)}`),
+      },
     ],
   });
 

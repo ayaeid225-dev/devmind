@@ -29,6 +29,7 @@ import {
 import { ingestGitHistory } from "../git";
 import { ingestContributors } from "../contributors";
 import { syncRepositoryStats } from "../repositories/stats";
+import { notifyRepoMembers, createNotification } from "../notifications";
 
 export interface IngestionParams {
   owner: string;
@@ -117,7 +118,13 @@ export async function ingestRepository({
     }
   }
 
-  // 2. Mark Repository status as INDEXING
+  // 2. Check if repository is newly connected
+  const existingRepoBefore = await db.repository.findUnique({
+    where: { id: repoId },
+  });
+  const isNewlyConnected = !existingRepoBefore;
+
+  // Mark Repository status as INDEXING
   const repository = await db.repository.upsert({
     where: { id: repoId },
     update: {
@@ -141,10 +148,33 @@ export async function ingestRepository({
     },
   });
 
+  if (isNewlyConnected && user?.id && user.id !== "system-sync") {
+    try {
+      await createNotification({
+        userId: user.id,
+        repoId: repository.id,
+        orgId: org?.id,
+        projectId,
+        type: "REPO_CONNECTED",
+        title: "Repository connected",
+        message: `Connected ${owner}/${repo} to workspace.`,
+        entityId: repository.id,
+        link: `/app/overview?repoId=${encodeURIComponent(repository.id)}`,
+        dedupeKey: `${user.id}:repo-connected:${repository.id}`,
+      });
+    } catch (notifErr) {
+      console.warn(
+        "Non-fatal: Failed to create REPO_CONNECTED notification:",
+        notifErr
+      );
+    }
+  }
+
   try {
     // 3. Fetch Branches
     const branches = await fetchRepoBranches(owner, repo);
-    const activeBranch = branch || branches.find((b) => b.isDefault)?.name || "main";
+    const activeBranch =
+      branch || branches.find((b) => b.isDefault)?.name || "main";
 
     for (const b of branches) {
       await db.branch.upsert({
@@ -207,23 +237,43 @@ export async function ingestRepository({
 
     if (validPathsSet.has("tsconfig.json")) {
       try {
-        tsconfigContent = await fetchRawFileContent(owner, repo, "tsconfig.json", activeBranch);
+        tsconfigContent = await fetchRawFileContent(
+          owner,
+          repo,
+          "tsconfig.json",
+          activeBranch
+        );
       } catch {}
     } else if (validPathsSet.has("jsconfig.json")) {
       try {
-        tsconfigContent = await fetchRawFileContent(owner, repo, "jsconfig.json", activeBranch);
+        tsconfigContent = await fetchRawFileContent(
+          owner,
+          repo,
+          "jsconfig.json",
+          activeBranch
+        );
       } catch {}
     }
 
     if (validPathsSet.has("pubspec.yaml")) {
       try {
-        pubspecContent = await fetchRawFileContent(owner, repo, "pubspec.yaml", activeBranch);
+        pubspecContent = await fetchRawFileContent(
+          owner,
+          repo,
+          "pubspec.yaml",
+          activeBranch
+        );
       } catch {}
     }
 
     if (validPathsSet.has("go.mod")) {
       try {
-        goModContent = await fetchRawFileContent(owner, repo, "go.mod", activeBranch);
+        goModContent = await fetchRawFileContent(
+          owner,
+          repo,
+          "go.mod",
+          activeBranch
+        );
       } catch {}
     }
 
@@ -234,15 +284,23 @@ export async function ingestRepository({
     });
 
     // 6. Process Source Files & Multi-Language Manifests
-    const fileImportsList: Array<{ module: string; imports: string[] }> = [];
+    const fileImportsList: Array<{
+      module: string;
+      imports: string[];
+    }> = [];
     let totalLines = 0;
 
     for (const blob of validBlobs) {
       const moduleId = pathToModuleMap.get(blob.path) ?? null;
-      const sizeFormatted = `${(blob.size ?? 0 / 1024).toFixed(1)} KB`;
+      const sizeFormatted = `${((blob.size ?? 0) / 1024).toFixed(1)} KB`;
 
       try {
-        const content = await fetchRawFileContent(owner, repo, blob.path, activeBranch);
+        const content = await fetchRawFileContent(
+          owner,
+          repo,
+          blob.path,
+          activeBranch
+        );
         const analysis = analyzeSourceCode(blob.path, content);
         totalLines += analysis.lineCount;
 
@@ -260,16 +318,29 @@ export async function ingestRepository({
             fileResolvedDeps.push(resolved);
           }
         }
-        await syncFileDependencies(db, repository.id, blob.path, fileResolvedDeps);
+        await syncFileDependencies(
+          db,
+          repository.id,
+          blob.path,
+          fileResolvedDeps
+        );
 
         // Multi-language manifest parsing (package.json, requirements.txt, pyproject.toml, pubspec.yaml, go.mod, pom.xml, build.gradle, Cargo.toml)
         if (isDependencyManifest(blob.path)) {
           const manifestDeps = parseManifestDependencies(blob.path, content);
-          await syncManifestDependencies(db, repository.id, blob.path, manifestDeps);
+          await syncManifestDependencies(
+            db,
+            repository.id,
+            blob.path,
+            manifestDeps
+          );
         }
 
         if (moduleId && analysis.imports.length > 0) {
-          fileImportsList.push({ module: moduleId, imports: analysis.imports });
+          fileImportsList.push({
+            module: moduleId,
+            imports: analysis.imports,
+          });
         }
 
         const symbolsJson = JSON.stringify(analysis.parsedFileResult);
@@ -306,8 +377,14 @@ export async function ingestRepository({
           },
         });
       } catch (fileError) {
-        const errorMsg = fileError instanceof Error ? fileError.message : "Failed to ingest file";
-        console.error(`Failed to ingest file ${blob.path}:`, fileError);
+        const errorMsg =
+          fileError instanceof Error
+            ? fileError.message
+            : "Failed to ingest file";
+        console.error(
+          `Failed to ingest file ${blob.path}:`,
+          fileError
+        );
 
         await db.fileRecord.upsert({
           where: {
@@ -340,7 +417,10 @@ export async function ingestRepository({
     }
 
     // 7. Process Internal Module Edges & Count Total Dependencies
-    const moduleEdges = resolveInternalModuleEdges(fileImportsList, pathToModuleMap);
+    const moduleEdges = resolveInternalModuleEdges(
+      fileImportsList,
+      pathToModuleMap
+    );
     await syncModuleEdges(db, repository.id, moduleEdges);
 
     const totalDepsCount = await db.dependencyRecord.count({
@@ -353,15 +433,31 @@ export async function ingestRepository({
       const contributors = await fetchRepoContributors(owner, repo);
       if (contributors.length > 0) {
         contributorsCount = contributors.length;
-        const colorPalette = ["#C8D62B", "#4A90E2", "#9B51E0", "#E67E22", "#2ECC71", "#E74C3C", "#1ABC9C"];
-        const totalContributions = contributors.reduce((acc, c) => acc + (c.contributions || 1), 0);
+        const colorPalette = [
+          "#C8D62B",
+          "#4A90E2",
+          "#9B51E0",
+          "#E67E22",
+          "#2ECC71",
+          "#E74C3C",
+          "#1ABC9C",
+        ];
+        const totalContributions = contributors.reduce(
+          (acc, c) => acc + (c.contributions || 1),
+          0
+        );
 
         for (let i = 0; i < contributors.length; i++) {
           const contrib = contributors[i];
           const color = colorPalette[i % colorPalette.length];
           const coveragePercent = Math.min(
             100,
-            Math.max(10, Math.round(((contrib.contributions || 1) / totalContributions) * 100))
+            Math.max(
+              10,
+              Math.round(
+                ((contrib.contributions || 1) / totalContributions) * 100
+              )
+            )
           );
 
           await db.developerRecord.upsert({
@@ -385,7 +481,10 @@ export async function ingestRepository({
         }
       }
     } catch (contribError) {
-      console.warn(`Non-fatal warning: Failed to fetch contributors for ${owner}/${repo}:`, contribError);
+      console.warn(
+        `Non-fatal warning: Failed to fetch contributors for ${owner}/${repo}:`,
+        contribError
+      );
     }
 
     try {
@@ -403,7 +502,10 @@ export async function ingestRepository({
         });
       }
     } catch (commitsError) {
-      console.warn(`Non-fatal warning: Failed to fetch commits for ${owner}/${repo}:`, commitsError);
+      console.warn(
+        `Non-fatal warning: Failed to fetch commits for ${owner}/${repo}:`,
+        commitsError
+      );
     }
 
     // Record Indexing Summary Activity Event
@@ -423,11 +525,18 @@ export async function ingestRepository({
     let gitSyncResult = null;
     if (effectiveLocalPath) {
       try {
-        gitSyncResult = await ingestGitHistory(repository.id, effectiveLocalPath, {
-          branch: activeBranch,
-        });
+        gitSyncResult = await ingestGitHistory(
+          repository.id,
+          effectiveLocalPath,
+          {
+            branch: activeBranch,
+          }
+        );
       } catch (gitErr) {
-        console.warn(`Non-fatal warning: Git history ingestion failed for ${repository.id}:`, gitErr);
+        console.warn(
+          `Non-fatal warning: Git history ingestion failed for ${repository.id}:`,
+          gitErr
+        );
       }
     }
 
@@ -436,13 +545,19 @@ export async function ingestRepository({
     try {
       contributorSyncResult = await ingestContributors(repository.id);
     } catch (contribErr) {
-      console.warn(`Non-fatal warning: Contributor ingestion failed for ${repository.id}:`, contribErr);
+      console.warn(
+        `Non-fatal warning: Contributor ingestion failed for ${repository.id}:`,
+        contribErr
+      );
     }
 
     // 11. Update Repository status to COMPLETED
     const completedAt = new Date();
     const repoStats = await syncRepositoryStats(repository.id);
-    const finalCommitSha = targetCommitSha || gitSyncResult?.latestCommitSha || repoStats.latestCommitSha;
+    const finalCommitSha =
+      targetCommitSha ||
+      gitSyncResult?.latestCommitSha ||
+      repoStats.latestCommitSha;
 
     await db.repository.update({
       where: { id: repository.id },
@@ -462,6 +577,27 @@ export async function ingestRepository({
       },
     });
 
+    // Create Ingestion Completed Notification
+    try {
+      await notifyRepoMembers(repository.id, {
+        type: "INGESTION_COMPLETED",
+        title: "Repository ingestion completed",
+        message: `Repository ${owner}/${repo} indexed successfully (${repoStats.filesCount} files, ${repoStats.modulesCount} modules).`,
+        entityId: repository.id,
+        link: `/app/overview?repoId=${encodeURIComponent(repository.id)}`,
+        dedupeKey: `ingestion-completed:${
+          repository.id
+        }:${finalCommitSha || completedAt.getTime()}`,
+        targetUserId:
+          user?.id && user.id !== "system-sync" ? user.id : undefined,
+      });
+    } catch (notifErr) {
+      console.warn(
+        "Non-fatal: Failed to create INGESTION_COMPLETED notification:",
+        notifErr
+      );
+    }
+
     return {
       success: true,
       repoId: repository.id,
@@ -474,8 +610,12 @@ export async function ingestRepository({
       contributorsCount: repoStats.contributorsCount,
     };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "Ingestion failed";
-    console.error(`Repository ingestion error for ${owner}/${repo}:`, error);
+    const errorMsg =
+      error instanceof Error ? error.message : "Ingestion failed";
+    console.error(
+      `Repository ingestion error for ${owner}/${repo}:`,
+      error
+    );
 
     await db.repository.update({
       where: { id: repository.id },
@@ -485,6 +625,25 @@ export async function ingestRepository({
         completedAt: new Date(),
       },
     });
+
+    // Create Ingestion Failed Notification
+    try {
+      await notifyRepoMembers(repository.id, {
+        type: "INGESTION_FAILED",
+        title: "Repository ingestion failed",
+        message: `Failed to index repository ${owner}/${repo}: ${errorMsg}`,
+        entityId: repository.id,
+        link: `/app/overview?repoId=${encodeURIComponent(repository.id)}`,
+        dedupeKey: `ingestion-failed:${repository.id}:${Date.now()}`,
+        targetUserId:
+          user?.id && user.id !== "system-sync" ? user.id : undefined,
+      });
+    } catch (notifErr) {
+      console.warn(
+        "Non-fatal: Failed to create INGESTION_FAILED notification:",
+        notifErr
+      );
+    }
 
     throw error;
   }
